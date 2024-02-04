@@ -61,21 +61,20 @@ with strategy.scope() :
             return latent_representation
 
     class UNetDiffusionModule(tf.keras.Model):
-        def __init__(self, time_embedding_dim=64, text_embedding_dim=512):
+        def __init__(self, num_batch, time_embedding_dim=128, text_embedding_dim=64):
             super(UNetDiffusionModule, self).__init__()
-            
-            self.time_embedding = Embedding(input_dim=10000, output_dim=time_embedding_dim)
+            self.batch_size = num_batch           
+            self.time_embedding = Embedding(input_dim=time_embedding_dim, output_dim=self.batch_size)
             self.text_projection = Dense(units=text_embedding_dim)
             self.time_embedding_dim = time_embedding_dim
             self.text_embedding_dim = text_embedding_dim       
-            self.unet_block = self._build_unet_block()
 
             
             self.final_conv = Conv2D(filters=3, kernel_size=(7, 7), strides=(1, 1), padding='same')
     
             
-        def _build_unet_block():
-            inputs = Input(shape=(256, 256, 3))
+        def _build_unet_block(self, dim):
+            inputs = Input(shape=(256, 256, 3 + dim * self.text_embedding_dim + self.time_embedding_dim))
 
             def conv_block(x, filters, kernel_size, strides=1, padding='same', activation='relu'):
                 x = Conv2D(filters, kernel_size, strides=strides, padding=padding)(x)
@@ -162,22 +161,20 @@ with strategy.scope() :
             return generator
 
             
-        def call(self, noisy_images, time_step, text_embeddings):
+        def call(self, noisy_images, time_step, text_embeddings, width, height, batch_size):
             
             time_embedding = self.time_embedding(time_step)
             text_embedding = self.text_projection(text_embeddings)
+            dim_1 = tf.TensorShape(text_embedding.shape).as_list()[1]
 
-            batch_size = tf.shape(noisy_images)[0]
-            height = tf.shape(noisy_images)[1]
-            width = tf.shape(noisy_images)[2]
-
+            self.unet_block = self._build_unet_block(dim_1)
             
             time_embedding_reshaped = tf.reshape(time_embedding, [batch_size, 1, 1, self.time_embedding_dim])
             
             time_embedding_tiled = tf.tile(time_embedding_reshaped, [1, height, width, 1]) 
             
             
-            text_embedding_reshaped = tf.reshape(text_embedding, [batch_size, 1, 1, self.text_embedding_dim])
+            text_embedding_reshaped = tf.reshape(text_embedding, [batch_size, 1, 1, self.text_embedding_dim*dim_1])
             text_embedding_tiled = tf.tile(text_embedding_reshaped, [1, height, width, 1]) 
         
             
@@ -189,16 +186,16 @@ with strategy.scope() :
 
     
     class Text2ImageDiffusionModel(tf.keras.Model):
-        def __init__(self, text_encoder_model_url, image_weights):
+        def __init__(self, text_encoder_model_url, image_weights, num_batch):
             super(Text2ImageDiffusionModel, self).__init__()
             self.text_encoder = TextEncoder(text_encoder_model_url)
             self.image_encoder = ImageEncoder(weights_path=image_weights)
-            self.diffusion_module = UNetDiffusionModule()
+            self.diffusion_module = UNetDiffusionModule(num_batch)
         
-        def call(self, text_inputs, image_inputs, time_steps, attentions):
+        def call(self, text_inputs, image_inputs, time_steps, attentions, width, height, batch_size):
             text_embeddings = self.text_encoder(text_inputs, attentions)
             latent_images = self.image_encoder(image_inputs)
-            generated_images = self.diffusion_module(latent_images, time_steps, text_embeddings)
+            generated_images = self.diffusion_module(latent_images, time_steps, text_embeddings, width, height, batch_size)
             return generated_images
         
 
@@ -263,7 +260,8 @@ with strategy.scope() :
 
     def main() :
         configuration()
-        epochs = 10000  
+        epochs = 10000 
+        time_embedding_dim = 128 
         csv_path = 'descriptions.csv'
         images_path = './images'
         width, height = 256, 256
@@ -271,7 +269,7 @@ with strategy.scope() :
         global BERT_PATH, RESNET50_PATH
         RESNET50_PATH = './ResNet50/resnet50_weights_tf_dim_ordering_tf_kernels_notop.h5'
         BERT_PATH ='./BERT'
-        text2image_model = Text2ImageDiffusionModel(BERT_PATH, RESNET50_PATH)
+        text2image_model = Text2ImageDiffusionModel(BERT_PATH, RESNET50_PATH, BATCH_SIZE)
         dataset, memory_size = load_dataset(csv_path, images_path, BATCH_SIZE, height, width)
         loss_fn = MeanSquaredError()
         log_file_path = './log/StackGAN++.log'
@@ -286,13 +284,13 @@ with strategy.scope() :
         
         for epoch in range(epochs):
             dataset = dataset.shuffle(buffer_size= memory_size, reshuffle_each_iteration=True)
-            time_steps = tf.range(0, epochs, dtype=tf.float32)  
+            time_steps = tf.range(0, time_embedding_dim, dtype=tf.float32)  
             iterator = iter(dataset)
 
             for batch in iterator :
                 with tf.GradientTape() as tape:
-                    text_inputs, image_inputs, attention = batch[0], batch[1][0], batch[1][1]
-                    generated_images = text2image_model(text_inputs, image_inputs, time_steps, attention)
+                    image_inputs, text_inputs, attention = batch[0], batch[1][0], batch[1][1]
+                    generated_images = text2image_model(text_inputs, image_inputs, time_steps, attention, width, height, BATCH_SIZE)
                     loss = loss_fn(image_inputs, generated_images)
 
                 gradients = tape.gradient(loss, text2image_model.trainable_variables)
