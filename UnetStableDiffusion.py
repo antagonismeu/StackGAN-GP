@@ -9,12 +9,12 @@ try :
     from tensorflow.keras.losses import MeanSquaredError
     from tensorflow.keras.preprocessing.text import Tokenizer
     from tensorflow.keras.preprocessing.sequence import pad_sequences
-    from transformer import TFBertModel, BertTokenizer
+    from transformers import TFBertModel, BertTokenizer
     import pandas as pd
     from PIL import Image
     import numpy as np
 except :
-    requirements = ['numpy', 'tensorflow', 'pandas', 'Pillow', 'transfomers']
+    requirements = ['numpy', 'tensorflow', 'pandas', 'Pillow', 'transformers']
     for item in requirements :
         os.system(f'pip3 install {item}')
         print('Done!')
