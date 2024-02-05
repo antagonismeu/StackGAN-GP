@@ -27,6 +27,12 @@ if gpu_devices:
 
 
 
+global WIDTH, HEIGHT
+width, height = 128, 128                                  #INFERIOR VALUES : width, height = 128, 128  
+WIDTH , HEIGHT = width, height
+BATCH_SIZE = 4
+
+
 
 
 def configuration() :
@@ -49,7 +55,7 @@ class TextEncoder(tf.keras.Model):
 
 
 class ImageEncoder(tf.keras.Model):
-    def __init__(self, input_shape=(128, 128, 3), output_dim=512):
+    def __init__(self, input_shape=(WIDTH, HEIGHT, 3), output_dim=512):
         super(ImageEncoder, self).__init__()
         self.conv1 = layers.Conv2D(64, (3, 3), activation='relu', padding='same', input_shape=input_shape)
         self.pooling1 = layers.MaxPooling2D((2, 2))
@@ -295,10 +301,6 @@ def main() :
     time_embedding_dim = 128
     csv_path = 'descriptions.csv'
     images_path = './images'
-    global WIDTH, HEIGHT
-    width, height = 128, 128
-    WIDTH , HEIGHT = width, height
-    BATCH_SIZE = 4
 
 
     
@@ -307,13 +309,14 @@ def main() :
 
     
     dataset, vocab_size = load_dataset(csv_path, images_path, BATCH_SIZE, height, width)
-    text2image_model = Text2ImageDiffusionModel(vocab_size, BATCH_SIZE, width, height)
-    optimizer = Adam(learning_rate=0.001)
-    loss_fn = MeanSquaredError()
+    with strategy.scope() :
+        text2image_model = Text2ImageDiffusionModel(vocab_size, BATCH_SIZE, width, height)
+        optimizer = Adam(learning_rate=0.001)
+        loss_fn = MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
 
 
-        
-    text2image_model.compile(optimizer=optimizer, loss=loss_fn)
+            
+        text2image_model.compile(optimizer=optimizer, loss=loss_fn)
 
     
     
@@ -336,15 +339,21 @@ def main() :
         return loss
 
 
+    def distributed_train_step(dataset_inputs):
+        per_replica_losses = strategy.run(train, args=(dataset_inputs,))
+        return strategy.reduce(tf.distribute.ReduceOp.SUM, per_replica_losses,
+                         axis=None)
+
+
     for epoch in range(epochs):
         
         dataset = dataset.shuffle(buffer_size=vocab_size, reshuffle_each_iteration=True)
-
+        dataset = strategy.experimental_distribute_dataset(dataset)
         iterator = iter(dataset)        
         
         num, total_losses = 0, 0
         for batch in iterator:
-            per_loss = train(batch)
+            per_loss = distributed_train_step(batch)
             num += 1
             total_losses += per_loss
         train_loss = total_losses / num
