@@ -73,8 +73,8 @@ with strategy.scope() :
             self.final_conv = Conv2D(filters=3, kernel_size=(7, 7), strides=(1, 1), padding='same')
     
             
-        def _build_unet_block(self, dim):
-            inputs = Input(shape=(256, 256, 3 + dim * self.text_embedding_dim + self.time_embedding_dim))
+        def _build_unet_block(self, dim, width, height):
+            inputs = Input(shape=(width, height, 3 + dim * self.text_embedding_dim + self.time_embedding_dim))
 
             def conv_block(x, filters, kernel_size, strides=1, padding='same', activation='relu'):
                 x = Conv2D(filters, kernel_size, strides=strides, padding=padding)(x)
@@ -167,15 +167,15 @@ with strategy.scope() :
             text_embedding = self.text_projection(text_embeddings)
             dim_1 = tf.TensorShape(text_embedding.shape).as_list()[1]
 
-            self.unet_block = self._build_unet_block(dim_1)
+            self.unet_block = self._build_unet_block(dim_1, width, height)
             
             time_embedding_reshaped = tf.reshape(time_embedding, [batch_size, 1, 1, self.time_embedding_dim])
             
-            time_embedding_tiled = tf.tile(time_embedding_reshaped, [1, height, width, 1]) 
+            time_embedding_tiled = tf.tile(time_embedding_reshaped, [1, width, height, 1]) 
             
             
             text_embedding_reshaped = tf.reshape(text_embedding, [batch_size, 1, 1, self.text_embedding_dim*dim_1])
-            text_embedding_tiled = tf.tile(text_embedding_reshaped, [1, height, width, 1]) 
+            text_embedding_tiled = tf.tile(text_embedding_reshaped, [1, width, height, 1]) 
         
             
             d1 = Concatenate(axis=-1)([noisy_images, time_embedding_tiled, text_embedding_tiled]) 
