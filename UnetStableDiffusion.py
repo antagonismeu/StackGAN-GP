@@ -252,7 +252,7 @@ with strategy.scope() :
                     
         time_steps_ = tf.range(0, time_steps, dtype=tf.float32)
         generated_images = model(tokenized_inputs, initial_image, time_steps_, attention_mask)
-        final_image = generated_images[-1].numpy()
+        final_image = generated_images[-1]
         postprocedure(final_image, path)
 
 
