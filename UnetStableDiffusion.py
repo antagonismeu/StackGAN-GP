@@ -27,7 +27,7 @@ if gpu_devices:
 
 
 global WIDTH, HEIGHT
-width, height = 128, 128
+width, height = 128, 128                                  #INFERIOR BOUNDARY : width, height = 128, 128  
 WIDTH , HEIGHT = width, height
 BATCH_SIZE = 4
 
