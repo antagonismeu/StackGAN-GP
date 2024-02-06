@@ -342,7 +342,7 @@ def main() :
     
     def train(batch) :
         with tf.GradientTape() as tape:
-            image_inputs, text_inputs = batch[0], batch[1][0]
+            image_inputs, text_inputs = batch[0], batch[1]
             time_steps = tf.range(0, time_embedding_dim, dtype=tf.float32)
             image_inputs = data_augmentation(image_inputs, implemented_coefficient)
             print(text_inputs.shape, image_inputs.shape, time_steps.shape)
