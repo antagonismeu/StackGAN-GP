@@ -262,20 +262,20 @@ def load_dataset(description_file, image_directory, batch_size, height, width):
 
 
         text_dataset = tf.data.Dataset.from_tensor_slices(voc_li)        
-        return text_dataset
+        return text_dataset, voc_li
         
     image_dataset = tf.data.Dataset.from_tensor_slices(image_paths).map(preprocess_image)
-    text_dataset = preprocess_text(descriptions)
+    text_dataset, voc_li = preprocess_text(descriptions)
 
     dataset = tf.data.Dataset.zip((image_dataset, text_dataset))
     dataset = dataset.shuffle(buffer_size=len(df)).batch(batch_size)
-    return dataset,  len(tokenizer.word_index) + 1
+    return dataset,  len(tokenizer.word_index) + 1, voc_li
 
 
-def generate_image_from_text(sentence, model, width, height, time_steps, path, initial_image=None):
+def generate_image_from_text(sentence, model, width, height, time_steps, path, gross_range, initial_image=None):
     try :                       
         inputs = [tokenizer.word_index[i] for i in sentence.split(" ")]
-        inputs = tf.keras.preprocessing.sequence.pad_sequences([inputs], maxlen=q_max_len, padding="post")
+        inputs = tf.keras.preprocessing.sequence.pad_sequences([inputs], maxlen=gross_range, padding="post")
         inputs = tf.convert_to_tensor(inputs)
 
         if initial_image is None:
@@ -298,6 +298,7 @@ def generate_image_from_text(sentence, model, width, height, time_steps, path, i
 def main() :
     configuration()
     epochs = 10000
+    implemented_coefficient = 0.25
     time_embedding_dim = 128
     csv_path = 'descriptions.csv'
     images_path = './images'
@@ -307,8 +308,14 @@ def main() :
     strategy = tf.distribute.MirroredStrategy()
     print(f'Number of available GPUs: {strategy.num_replicas_in_sync}')
 
+    def max_len(vectors) :
+        length = max(len(vec) for vec in vectors)
+        return length
+
     
-    dataset, vocab_size = load_dataset(csv_path, images_path, BATCH_SIZE, height, width)
+    dataset, vocab_size, magnitude = load_dataset(csv_path, images_path, BATCH_SIZE, height, width)
+    gross_magnitude = max_len(magnitude)
+
     with strategy.scope() :
         text2image_model = Text2ImageDiffusionModel(vocab_size, BATCH_SIZE, width, height)
         optimizer = Adam(learning_rate=0.001)
@@ -326,11 +333,18 @@ def main() :
     save_interval = 50
 
 
+
+    def data_augmentation(images, noise_factor=0.1):
+        noise = tf.random.normal(shape=(BATCH_SIZE, width, height, 3), mean=0.0, stddev=noise_factor)
+        return images + noise
+
+
     
     def train(batch) :
         with tf.GradientTape() as tape:
             image_inputs, text_inputs = batch[0], batch[1][0]
             time_steps = tf.range(0, time_embedding_dim, dtype=tf.float32)
+            image_inputs = data_augmentation(image_inputs, implemented_coefficient)
             print(text_inputs.shape, image_inputs.shape, time_steps.shape)
             generated_images = text2image_model(text_inputs, image_inputs, time_steps)
             loss = loss_fn(image_inputs, generated_images)
@@ -365,7 +379,7 @@ def main() :
 
         if (epoch + 1) % save_interval == 0:
             sentence = "a galaxy in the cosmos."
-            generate_image_from_text(sentence, text2image_model, width, height, epochs, save_path)
+            generate_image_from_text(sentence, text2image_model, width, height, time_embedding_dim, save_path, gross_magnitude)
             text2image_model.save_weights(f'models/UnetSD{epoch + 1}')
 
             converter = tf.lite.TFLiteConverter.from_keras_model(text2image_model)
