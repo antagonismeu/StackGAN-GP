@@ -90,13 +90,13 @@ class ImageEncoder(tf.keras.Model):
 
 
 class UNetDiffusionModule(tf.keras.Model):
-    def __init__(self, num_batch, width, height, time_embedding_dim=128, text_embedding_dim=16):
+    def __init__(self, num_batch, width, height, time_embedding_dim=128, text_embedding_dim=64):
         super(UNetDiffusionModule, self).__init__()
         self.batch_size = num_batch 
         self.width = width
         self.height = height          
         self.time_embedding = Embedding(input_dim=time_embedding_dim, output_dim=self.batch_size)
-        self.text_projection = Dense(units=text_embedding_dim * self.batch_size)
+        self.text_projection = Dense(units=text_embedding_dim)
         self.time_embedding_dim = time_embedding_dim
         self.text_embedding_dim = text_embedding_dim       
 
@@ -200,7 +200,7 @@ class UNetDiffusionModule(tf.keras.Model):
         dim_2 = tf.TensorShape(noisy_images.shape).as_list()[-1]
         dim_3 = tf.TensorShape(text_embedding.shape).as_list()[0]
 
-        self.unet_block = self._build_unet_block(dim_3, dim_2, self.width, self.height)
+        self.unet_block = self._build_unet_block(dim_1, dim_2, self.width, self.height)
             
         time_embedding_reshaped = tf.reshape(time_embedding, [self.batch_size, 1, 1, self.time_embedding_dim])
             
@@ -210,7 +210,7 @@ class UNetDiffusionModule(tf.keras.Model):
         noisy_images_tiled = tf.tile(noisy_images_reshaped, [1, self.width, self.height, 1])            
             
             
-        text_embedding_reshaped = tf.reshape(text_embedding, [self.batch_size, 1, 1, self.text_embedding_dim*dim_3])
+        text_embedding_reshaped = tf.reshape(text_embedding, [self.batch_size, 1, 1, self.text_embedding_dim*dim_1])
         text_embedding_tiled = tf.tile(text_embedding_reshaped, [1, self.width, self.height, 1]) 
         
             
@@ -347,7 +347,7 @@ def main() :
     
     def train(batch) :
         with tf.GradientTape() as tape:
-            image_inputs, text_inputs = batch[0], batch[1][0]
+            image_inputs, text_inputs = batch[0], batch[1]
             time_steps = tf.range(0, time_embedding_dim, dtype=tf.float32)
             image_inputs = data_augmentation(image_inputs, implemented_coefficient)
             print(text_inputs.shape, image_inputs.shape, time_steps.shape)
