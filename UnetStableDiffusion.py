@@ -300,7 +300,7 @@ def generate_image_from_text(sentence, model, width, height, time_steps, path, g
 def main() :
     configuration()
     epochs = 10000
-    implemented_coefficient = 0.25
+    implemented_coefficient = 0.37
     time_embedding_dim = 128
     csv_path = 'descriptions.csv'
     images_path = './images'
