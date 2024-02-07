@@ -344,9 +344,9 @@ def main() :
         with tf.GradientTape() as tape:
             image_inputs, text_inputs = batch[0], batch[1]
             time_steps = tf.range(0, time_embedding_dim, dtype=tf.float32)
-            image_inputs = data_augmentation(image_inputs, implemented_coefficient)
-            print(text_inputs.shape, image_inputs.shape, time_steps.shape)
-            generated_images = text2image_model(text_inputs, image_inputs, time_steps)
+            noised_inputs = data_augmentation(image_inputs, implemented_coefficient)
+            print(text_inputs.shape, noised_inputs.shape, time_steps.shape)
+            generated_images = text2image_model(text_inputs, noised_inputs, time_steps)
             loss = loss_fn(image_inputs, generated_images)
         gradients = tape.gradient(loss, text2image_model.trainable_variables)
         optimizer.apply_gradients(zip(gradients, text2image_model.trainable_variables))
