@@ -268,7 +268,7 @@ def load_dataset(description_file, image_directory, batch_size, height, width):
     return dataset,  len(tokenizer.word_index) + 1, voc_li
 
 
-def generate_image_from_text(sentence, model, width, height, time_steps, path, gross_range, initial_image=None):
+def generate_image_from_text(sentence, model, width, height, time_steps, path, gross_range, signature, initial_image=None):
     try :                       
         inputs = [tokenizer.word_index[i] for i in sentence.split(" ")]
         inputs = tf.keras.preprocessing.sequence.pad_sequences([inputs], maxlen=gross_range, padding="post")
@@ -277,14 +277,14 @@ def generate_image_from_text(sentence, model, width, height, time_steps, path, g
         if initial_image is None:
             initial_image = tf.random.normal(shape=[1, width, height, 3])  
             initial_image = tf.clip_by_value(initial_image, -1, 1)
-        def postprocedure(img, path) :
+        def postprocedure(img, path, signature) :
             img = np.clip(img, 0, 255).astype(np.uint8)
-            Image.fromarray(img).save(path)
+            Image.fromarray(img).save(f'{path}/{signature}.png')
                     
         time_steps_ = tf.range(0, time_steps, dtype=tf.float32)
         generated_images = model(inputs, initial_image, time_steps_)
         final_image = generated_images[-1]
-        postprocedure(final_image, path)
+        postprocedure(final_image, path, signature)
     except :
         print('ERROR OCCURED')
 
@@ -375,7 +375,7 @@ def main() :
 
         if (epoch + 1) % save_interval == 0:
             sentence = "a galaxy in the cosmos."
-            generate_image_from_text(sentence, text2image_model, width, height, time_embedding_dim, save_path, gross_magnitude)
+            generate_image_from_text(sentence, text2image_model, width, height, time_embedding_dim, save_path, gross_magnitude, epoch+1)
             text2image_model.save_weights(f'models/UnetSD{epoch + 1}')
 
             converter = tf.lite.TFLiteConverter.from_keras_model(text2image_model)
