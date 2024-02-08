@@ -57,33 +57,29 @@ class TextEncoder(tf.keras.Model):
 class ImageEncoder(tf.keras.Model):
     def __init__(self, input_shape=(WIDTH, HEIGHT, 3), output_dim=512):
         super(ImageEncoder, self).__init__()
-        self.conv1 = layers.Conv2D(64, (3, 3), activation='relu', padding='same', input_shape=input_shape)
-        self.pooling1 = layers.MaxPooling2D((2, 2))
-        self.conv2 = layers.Conv2D(128, (3, 3), activation='relu', padding='same')
-        self.pooling2 = layers.MaxPooling2D((2, 2))
-        self.conv3 = layers.Conv2D(256, (4, 4), activation='relu', padding='same')
-        self.pooling3 = layers.MaxPooling2D((2, 2))
-        self.conv4 = layers.Conv2D(512, (4, 4), activation='relu', padding='same')
-        self.pooling4 = layers.MaxPooling2D((2, 2))
-        self.conv5 = layers.Conv2D(1024, (4, 4), activation='relu', padding='same')
-        self.pooling5 = layers.MaxPooling2D((2, 2))
+        self.conv_blocks = [
+            layers.Conv2D(64, (3, 3), activation='relu', padding='same', input_shape=input_shape),
+            layers.MaxPooling2D((2, 2)),
+            layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
+            layers.MaxPooling2D((2, 2)),
+            layers.Conv2D(256, (4, 4), activation='relu', padding='same'),
+            layers.MaxPooling2D((2, 2)),
+            layers.Conv2D(512, (4, 4), activation='relu', padding='same'),
+            layers.MaxPooling2D((2, 2)),
+            layers.Conv2D(1024, (4, 4), activation='relu', padding='same'),
+            layers.MaxPooling2D((2, 2)),
+        ]
         self.flatten = layers.Flatten()
         self.image_projection = layers.Dense(output_dim)
 
     def call(self, inputs):
-        x = self.conv1(inputs)
-        x = self.pooling1(x)
-        x = self.conv2(x)
-        x = self.pooling2(x)
-        x = self.conv3(x)
-        x = self.pooling3(x)
-        x = self.conv4(x)
-        x = self.pooling4(x)
-        x = self.conv5(x)
-        x = self.pooling5(x)
+        x = inputs
+        for layer in self.conv_blocks:
+            x = layer(x)
         x = self.flatten(x)
         latent_representation = self.image_projection(x)
         return latent_representation
+
 
 
 
