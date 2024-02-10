@@ -374,7 +374,7 @@ def main() :
             log_file.write(f"Epoch {epoch + 1}, Batch Losses: {train_loss.numpy()}\n")
 
         if (epoch + 1) % save_interval == 0:
-            sentence = "a galaxy in the cosmos."
+            sentence = "city parks with workshops and outdoor classrooms"
             generate_image_from_text(sentence, text2image_model, width, height, time_embedding_dim, save_path, gross_magnitude, epoch+1)
             text2image_model.save_weights(f'models/UnetSD{epoch + 1}')
 
