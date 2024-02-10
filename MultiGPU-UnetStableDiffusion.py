@@ -362,11 +362,11 @@ def main() :
         iterator = iter(dataset)        
         
         num, total_losses = 0, 0
-        for batch in iterator:
+        for num_, batch in enumerate(iterator):
             per_loss = distributed_train_step(batch)
             num += 1
             total_losses += per_loss
-            print(f'per_batch_loss:{per_loss} epoch:{epoch} batch_index:{batch}')
+            print(f'per_batch_loss:{per_loss} epoch:{epoch} batch_index:{num_+1}')
         train_loss = total_losses / num
 
 
