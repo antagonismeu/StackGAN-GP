@@ -366,6 +366,7 @@ def main() :
             per_loss = distributed_train_step(batch)
             num += 1
             total_losses += per_loss
+            print(f'per_batch_loss:{per_loss} epoch:{epoch} batch_index:{batch}')
         train_loss = total_losses / num
 
 
