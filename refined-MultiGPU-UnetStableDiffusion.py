@@ -408,6 +408,12 @@ def generate_image_from_text(sentence, model1, model2, width, height, time_steps
 
 
 def main_stage1():
+    print('''
+        -----------------------------
+        ---Stage 1 Is Initialized-----  
+        -----------------------------
+
+    ''')
     configuration()
     epochs = 10000
     alpha = 0.828
@@ -493,6 +499,12 @@ def main_stage1():
 
             with open(f'models/UnetSD{epoch + 1}.tflite', 'wb') as f:
                 f.write(tflite_model)
+    print('''
+        -----------------------------
+        ---Stage 1 Is Terminated-----  
+        -----------------------------
+
+    ''')
     return predicted_latent_list, text2image_model, gross_magnitude
 
 
@@ -501,6 +513,12 @@ def main_stage1():
 
 
 def main_stage2(datum, model1, magnitude) :
+    print('''
+        -----------------------------
+        ---Stage 2 Is Initialized-----  
+        -----------------------------
+
+    ''')
     coversion_log_path = './log/ImgDecoder.log'
     strategy = tf.distribute.MirroredStrategy()
     time_embedding_dim = 512
@@ -592,7 +610,12 @@ def main_stage2(datum, model1, magnitude) :
 
             with open(f'models/ImgDecoder{epoch + 1}.tflite', 'wb') as f:
                 f.write(tflite_model)
+    print('''
+        -----------------------------
+        ---Stage 2 Is Terminated-----  
+        -----------------------------
 
+    ''')
 
 
 
