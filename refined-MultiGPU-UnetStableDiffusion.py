@@ -236,7 +236,7 @@ class UNetDiffusionModule(tf.keras.Model):
         dim_1 = tf.TensorShape(text_embedding.shape).as_list()[1]
         dim_2 = tf.TensorShape(noisy_images.shape).as_list()[-1]
         dim_3 = tf.TensorShape(text_embedding.shape).as_list()[0]
-        dim_4 = tf.TensorShape(time_step.shape).as_list()[-1]
+        dim_4 = tf.TensorShape(time_step.shape).as_list()[0]
         self.unet_block = self.build_unet_block(dim_1, dim_2, self.width, self.height, dim_4)
             
         time_embedding_reshaped = tf.reshape(time_embedding, [self.batch_size, 1, 1, dim_4])
@@ -320,7 +320,7 @@ class Text2ImageDiffusionModel(tf.keras.Model):
         text_embeddings, _ = self.multi_head_attention(text_embeddings, text_embeddings, text_embeddings)
         generated_images = self.diffusion_module(images_tensor[-1], time_steps_vector[-1], text_embeddings)
         generated_list.append(generated_images)
-        varied_tensor = 1/np.sqrt(self.alpha)*(images_tensor[-1] - (1 - self.alpha)/np.sqrt(1 - self.alpha**float(len(images_tensor))) * generated_images) + np.sqrt(1 - self.alpha) * latent_gaussian_tensor[len(images_tensor) - 1]
+        varied_tensor = 1/np.sqrt(self.alpha)*(images_tensor[-1] - (1 - self.alpha)/np.sqrt(1 - self.alpha**float(len(images_tensor))) * generated_images) + np.sqrt(1 - self.alpha) * latent_gaussian_tensor[len(images_tensor) - 2]
         for index in reversed(range(1, len(images_tensor) - 1)) :
             generated_images = self.diffusion_module(varied_tensor, time_steps_vector[index], text_embeddings)
             generated_list.append(generated_images)
