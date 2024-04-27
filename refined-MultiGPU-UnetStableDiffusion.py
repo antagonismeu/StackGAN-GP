@@ -379,7 +379,7 @@ def load_dataset(description_file, image_directory, batch_size, height, width):
     text_dataset, voc_li = preprocess_text(descriptions)
 
     dataset = tf.data.Dataset.zip((image_dataset, text_dataset))
-    dataset = dataset.shuffle(buffer_size=len(df)+1, reshuffle_each_iteration=True).batch(batch_size)
+    dataset = dataset.shuffle(buffer_size=max(len(df)+1, 512), reshuffle_each_iteration=True).batch(batch_size)
     return dataset,  len(tokenizer.word_index) + 1, voc_li
 
 
@@ -580,16 +580,15 @@ def main_stage2(datum, model1, magnitude) :
             individual_targets.extend(tf.unstack(batch_targets))
             individual_outputs.extend(tf.unstack(batch_output))
         
-            targets_tensor = tf.stack(individual_targets)
-            outputs_tensor = tf.stack(individual_outputs)
+        targets_tensor = tf.stack(individual_targets)
+        outputs_tensor = tf.stack(individual_outputs)
 
             
-            targets_dataset = tf.data.Dataset.from_tensor_slices(targets_tensor)
-            outputs_dataset = tf.data.Dataset.from_tensor_slices(outputs_tensor)
+        targets_dataset = tf.data.Dataset.from_tensor_slices(targets_tensor)
+        outputs_dataset = tf.data.Dataset.from_tensor_slices(outputs_tensor)
 
             
-            tensorized_data = tf.data.Dataset.zip((targets_dataset, outputs_dataset))
-        tensorized_data = tensorized_data.shuffle(buffer_size=len(datum), reshuffle_each_iteration=True).batch(GLOBAL_BATCH_SIZE)
+        tensorized_data = tf.data.Dataset.zip((targets_dataset, outputs_dataset)).shuffle(buffer_size=max(len(datum), 512), reshuffle_each_iteration=True).batch(GLOBAL_BATCH_SIZE)
         sparse_tensorized_data = strategy.experimental_distribute_dataset(tensorized_data)
         iterator = iter(sparse_tensorized_data)
 
