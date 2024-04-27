@@ -10,12 +10,11 @@ try :
     from tensorflow.keras.losses import MeanSquaredError
     from tensorflow.keras.preprocessing.text import Tokenizer
     from tensorflow.keras.preprocessing.sequence import pad_sequences
-    from transformers import TFBertModel, BertTokenizer
     import pandas as pd
     from PIL import Image
     import numpy as np
 except :
-    requirements = ['numpy', 'tensorflow', 'pandas', 'Pillow', 'transformers']
+    requirements = ['numpy', 'tensorflow', 'pandas', 'Pillow']
     for item in requirements :
         os.system(f'pip3 install {item}')
         print('Done!')
@@ -27,7 +26,7 @@ if gpu_devices:
 
 
 global WIDTH, HEIGHT
-width, height = 128, 128                                  #INFERIOR BOUNDARY : width, height = 128, 128  
+width, height = 256, 256                                  #INFERIOR BOUNDARY : width, height = 128, 128  
 WIDTH , HEIGHT = width, height
 BATCH_SIZE = 4
 
@@ -84,8 +83,78 @@ class ImageEncoder(tf.keras.Model):
 
 
 
+class MultiHeadAttention(layers.Layer):
+    def __init__(self, d_model, num_heads):
+        super(MultiHeadAttention, self).__init__()
+        self.num_heads = num_heads
+        self.d_model = d_model
+        
+        assert d_model % self.num_heads == 0
+        
+        self.depth = d_model // self.num_heads
+        
+        self.wq = layers.Dense(d_model)
+        self.wk = layers.Dense(d_model)
+        self.wv = layers.Dense(d_model)
+        
+        self.dense = layers.Dense(d_model)
+        
+    def split_heads(self, x, batch_size):
+        x = tf.reshape(x, (batch_size, -1, self.num_heads, self.depth))
+        return tf.transpose(x, perm=[0, 2, 1, 3])
+    
+    def call(self, q, k, v, mask=None):
+        batch_size = tf.shape(q)[0]
+
+        q = self.apply_attention(q, mask)
+        k = self.apply_attention(k, mask)
+        v= self.apply_attention(v, mask)
+        
+        q = self.wq(q)
+        k = self.wk(k)
+        v = self.wv(v)
+        
+        q = self.split_heads(q, batch_size)
+        k = self.split_heads(k, batch_size)
+        v = self.split_heads(v, batch_size)
+        
+        scaled_attention, attention_weights = self.scaled_dot(q, k, v)
+        
+        scaled_attention = tf.transpose(scaled_attention, perm=[0, 2, 1, 3])
+        concat_attention = tf.reshape(scaled_attention, (batch_size, -1, self.d_model))
+        
+        output = self.dense(concat_attention)
+        
+        return output, attention_weights
+    
+
+    def apply_attention(self, text_inputs, mask) :
+        if mask is None:
+            mask = tf.cast(tf.math.equal(text_inputs, 0), tf.float32) 
+            text_inputs += (mask * -1e9)
+        return text_inputs    
+
+
+    def scaled_dot(self, q, k, v):
+        matmul_qk = tf.matmul(q, k, transpose_b=True)
+        
+        dk = tf.cast(tf.shape(k)[-1], tf.float32)
+        scaled_attention_logits = matmul_qk / tf.math.sqrt(dk)
+        
+            
+        attention_weights = tf.nn.softmax(scaled_attention_logits, axis=-1)
+        
+        output = tf.matmul(attention_weights, v)
+        
+        return output, attention_weights
+
+
+
+
+
+
 class UNetDiffusionModule(tf.keras.Model):
-    def __init__(self, num_batch, width, height, time_embedding_dim=128, text_embedding_dim=64):
+    def __init__(self, num_batch, width, height, time_embedding_dim=128, text_embedding_dim=128):
         super(UNetDiffusionModule, self).__init__()
         self.batch_size = num_batch 
         self.width = width
@@ -217,22 +286,26 @@ class UNetDiffusionModule(tf.keras.Model):
 
     
 class Text2ImageDiffusionModel(tf.keras.Model):
-    def __init__(self, vocab_size, num_batch, width, height):
+    def __init__(self, vocab_size, num_batch, width, height, num_heads=8, d_model=512):
         super(Text2ImageDiffusionModel, self).__init__()
         self.text_encoder = TextEncoder(vocab_size)
         self.image_encoder = ImageEncoder()
         self.batch_size = num_batch
         self.width = width
         self.height = height
+        self.num_heads = num_heads
+        self.d_model = d_model
         self.diffusion_module = UNetDiffusionModule(self.batch_size, self.width, self.height)
+        self.multi_head_attention = MultiHeadAttention(d_model=self.d_model, num_heads=self.num_heads)
         
     def call(self, text_inputs, image_inputs, time_steps):
         text_embeddings = self.text_encoder(text_inputs)
         latent_images = self.image_encoder(image_inputs)
+        text_embeddings, _ = self.multi_head_attention(text_embeddings, text_embeddings, text_embeddings)
         generated_images = self.diffusion_module(latent_images, time_steps, text_embeddings)
         return generated_images
-        
 
+        
 
 
 def load_dataset(description_file, image_directory, batch_size, height, width):
@@ -327,7 +400,7 @@ def main() :
     
     
 
-    log_file_path = './log/StackGAN++.log'
+    log_file_path = './log/UnetSD.log'
     save_path = './samples'
     save_interval = 50
 

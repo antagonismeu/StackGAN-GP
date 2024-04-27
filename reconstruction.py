@@ -31,7 +31,6 @@ def implementation(lists, img_lists) :
         response = requests.post(url=f'{url}/sdapi/v1/txt2img', json=payload)
 
         r = response.json()
-
         image = Image.open(io.BytesIO(base64.b64decode(r['images'][0])))
         image.save(f'./images/{img_lists[int(index)]}')
 
