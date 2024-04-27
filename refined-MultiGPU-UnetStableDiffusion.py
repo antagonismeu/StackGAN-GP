@@ -221,7 +221,7 @@ class UNetDiffusionModule(tf.keras.Model):
 
         deconv6 = deconv_block(deconv5, 64, 4, 2)
 
-        exaggeration = Conv2D(dim2 + dim * self.text_embedding_dim + dim_4, kernel_size=7, strides=1, padding='same', activation='sigmoid')(deconv6)
+        exaggeration = Conv2D(32, kernel_size=7, strides=1, padding='same', activation='sigmoid')(deconv6)
         transition = Flatten()(exaggeration)
         outputs = Dense(dim2)(transition)
         generator = Model(inputs=inputs, outputs=outputs)
@@ -395,10 +395,17 @@ def generate_image_from_text(sentence, model1, model2, width, height, time_steps
         def postprocedure(img, path, signature) :
             img = np.clip(img, 0, 255).astype(np.uint8)
             Image.fromarray(img).save(f'{path}/{signature}.png')
-                    
         time_steps_ = tf.range(0, time_steps, dtype=tf.float32)
-        latent_images = model1(inputs, initial_image, time_steps_)
-        generated_images = model2(latent_images)
+        text_embeddings = model1.text_encoder(inputs)
+        text_embeddings, _ = model1.multi_head_attention(text_embeddings, text_embeddings, text_embeddings)
+        time_steps_vector = model1.time_embedding(time_steps_)
+        latent_images = model1.image_encoder(initial_image)                    
+        generated_gaussian = model1.diffusion_module(latent_images, time_steps_vector[-1], text_embeddings)
+        varied_tensor = 1/np.sqrt(model1.alpha)*(latent_images - (1 - model1.alpha)/np.sqrt(1 - model1.alpha**float(len(time_steps_))) * generated_gaussian) + np.sqrt(1 - model1.alpha) * generated_gaussian
+        for index in reversed(range(1, len(time_steps_) - 1)) :
+            generated_gaussian= model1.diffusion_module(varied_tensor, time_steps_vector[index], text_embeddings)
+            varied_tensor = 1/np.sqrt(model1.alpha)*(varied_tensor - (1 - model1.alpha)/np.sqrt(1 - model1.alpha**float(index)) * generated_gaussian) + np.sqrt(1 - model1.alpha) * generated_gaussian
+        generated_images = model2(varied_tensor)
         final_image = generated_images[-1]
         postprocedure(final_image, path, signature)
     except :
