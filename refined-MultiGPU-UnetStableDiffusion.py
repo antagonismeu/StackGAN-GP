@@ -457,6 +457,7 @@ def main_stage1():
     def train_step(batch):
         image_inputs, text_inputs = batch[0], batch[1]
         time_steps = tf.range(0, time_embedding_dim, dtype=tf.float32)
+        print(text_inputs.shape, image_inputs.shape, time_steps.shape)
         output, predictions, targets = text2image_model(text_inputs, image_inputs, time_steps)
         counter, total_loss = 0, 0
         for index in reversed(range(len(targets))) :
