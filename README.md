@@ -20,7 +20,8 @@ IF you seek for the more specified instruction
 python3 refined_MultiGPU_UnetStableDiffusion.py --help[-h]
 ```
 
-**Model Information**Here is the brief summary of the number of parameters in both the DiffusionModel and DecoderModel:
+**Model Information**
+Here is the brief summary of the number of parameters in both the DiffusionModel and DecoderModel:
 
 ### Text2ImageDiffusionModel
 
