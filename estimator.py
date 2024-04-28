@@ -3,7 +3,7 @@ try:
     import tensorflow as tf
     if tf.__version__.startswith('1'):
         raise ImportError("Please upgrade your TensorFlow to version 2.x")
-    from refined_MultiGPU_UnetStableDifffusion import Text2ImageDiffusionModel, load_dataset, ImageDecoder
+    from refined_MultiGPU_UnetStableDiffusion import Text2ImageDiffusionModel, load_dataset, ImageDecoder
 except :
     requirements = ['numpy', 'tensorflow', 'pandas', 'Pillow', 'transformers']
     for item in requirements :
@@ -23,7 +23,7 @@ GLOBAL_BATCH_SIZE = BATCH_SIZE * tf.distribute.MirroredStrategy().num_replicas_i
 def main():
     print('''
         -----------------------------
-        ---Estimation Begins--------- 
+        -----Estimation Begins------- 
         -----------------------------
 
     ''')
@@ -57,7 +57,7 @@ def main():
     model2.summary()
     print('''
         -----------------------------
-        ---Estimation Terminates--------- 
+        ---Estimation Terminates----- 
         -----------------------------
 
     ''')

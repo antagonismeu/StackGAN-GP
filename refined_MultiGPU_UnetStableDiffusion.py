@@ -384,7 +384,6 @@ def generate_image_from_text(sentence, model1, model2, width, height, time_steps
             Image.fromarray(img).save(f'{path}/{signature}.png')
         time_steps_ = tf.range(0, time_steps, dtype=tf.float32)
         text_embeddings = model1.text_encoder(inputs)
-        text_embeddings, _ = model1.multi_head_attention(text_embeddings, text_embeddings, text_embeddings)
         time_steps_vector = model1.time_embedding(time_steps_)
         latent_images = model1.image_encoder(initial_image)                    
         generated_gaussian = model1.diffusion_module(latent_images, time_steps_vector[-1], text_embeddings)
@@ -434,7 +433,6 @@ def main_stage1():
         text2image_model.compile(optimizer=optimizer, loss=loss_fn)
 
     log_file_path = './log/UnetSD_Latent.log'
-    save_path = './samples'
     save_interval = 50
 
 
