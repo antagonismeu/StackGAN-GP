@@ -126,7 +126,7 @@ class MultiHeadAttention(layers.Layer):
         scaled_attention, attention_weights = self.scaled_dot(q, k, v)
         
         scaled_attention = tf.transpose(scaled_attention, perm=[0, 2, 1, 3])
-        concat_attention = tf.reshape(scaled_attention, (batch_size, -1, self.d_model))
+        concat_attention = tf.reshape(scaled_attention, (batch_size, self.d_model))
         
         output = self.dense(concat_attention)
         
@@ -234,8 +234,9 @@ class UNetDiffusionModule(tf.keras.Model):
     def call(self, noisy_images, time_step, text_embeddings):
             
         time_embedding = self.time_embedding(time_step)
-        text_embedding = self.flatten(text_embedding)
-        weighted_latent_vector = self.multi_head_attention(noisy_images, text_embedding, text_embedding)
+        text_embedding = self.flatten(text_embeddings)
+        time_embedding = tf.transpose(time_embedding, [1, 0])
+        weighted_latent_vector, _ = self.multi_head_attention(noisy_images, text_embedding, text_embedding)
         eigenvector = Concatenate(axis=-1)([weighted_latent_vector, time_embedding])
         dim_1 = tf.TensorShape(eigenvector.shape).as_list()[0]
         dim_2 = tf.TensorShape(eigenvector.shape).as_list()[-1]
