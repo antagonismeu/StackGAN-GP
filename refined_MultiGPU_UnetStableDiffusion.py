@@ -40,7 +40,7 @@ def configuration() :
     os.makedirs('./log', exist_ok=True)
     os.makedirs('./models', exist_ok=True)
     os.makedirs('./samples', exist_ok=True)
-    os.makedirs('./contemporary_checkpoints', exist_ok=True)
+    os.makedirs('./temporary_checkpoints', exist_ok=True)
 
 
 class TextEncoder(tf.keras.Model):
@@ -464,9 +464,9 @@ def main_stage1():
 
 
     def insurance(x1, model1, x2) :
-        with open("./contemporary_checkpoints/last_latent_vector.pkl", "wb") as in_f :
+        with open("./temporary_checkpoints/last_latent_vector.pkl", "wb") as in_f :
             pickle.dump((x1, x2), in_f)
-            model1.save_weights(f'./contemporary_checkpoints/InsuranceModel')
+            model1.save_weights(f'./temporary_checkpoints/InsuranceModel')
 
 
 
@@ -631,8 +631,8 @@ def main(mode="restart"):
             alpha = 0.828
             _, vocab_size, _ = load_dataset(csv_path_2, images_path_2, GLOBAL_BATCH_SIZE, height, width)
             model_ = Text2ImageDiffusionModel(vocab_size, BATCH_SIZE, width, height, channel, alpha)
-            model_.load_weights('./contemporary_checkpoints/InsuranceModel')
-            with open("./contemporary_checkpoints/last_latent_vector.pkl", "rb") as f:
+            model_.load_weights('./temporary_checkpoints/InsuranceModel')
+            with open("./temporary_checkpoints/last_latent_vector.pkl", "rb") as f:
                 x1, x2 = pickle.load(f)
             return x1, model_, x2                         
         except FileNotFoundError:
