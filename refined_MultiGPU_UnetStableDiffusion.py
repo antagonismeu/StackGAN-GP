@@ -8,9 +8,6 @@ try:
     from tensorflow.keras.models import Model
     from tensorflow.keras.optimizers.legacy import Adam
     from tensorflow.keras.losses import MeanSquaredError
-    from tensorflow.keras.preprocessing.text import Tokenizer
-    from tensorflow.keras.preprocessing.sequence import pad_sequences
-    from transformers import TFBertModel, BertTokenizer
     import pandas as pd
     from PIL import Image
     import numpy as np
