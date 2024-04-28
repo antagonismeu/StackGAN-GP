@@ -45,7 +45,7 @@ def configuration() :
 
 
 class TextEncoder(tf.keras.Model):
-    def __init__(self, vocab_size, output_dim=512, embed_dim=512):
+    def __init__(self, vocab_size, output_dim=128, embed_dim=512):
         super(TextEncoder, self).__init__()
         self.embedding = Embedding(input_dim=vocab_size, output_dim=embed_dim)
         self.text_projection = Dense(output_dim, activation='relu')
@@ -157,21 +157,23 @@ class MultiHeadAttention(layers.Layer):
 
 
 class UNetDiffusionModule(tf.keras.Model):
-    def __init__(self, num_batch, width, height, time_embedding_dim=4, text_embedding_dim=128):
+    def __init__(self, num_batch, width, height, text_embedding_dim=128, num_heads=8, d_model=512):
         super(UNetDiffusionModule, self).__init__()
         self.batch_size = num_batch 
         self.width = width
         self.height = height          
-        self.time_embedding = Embedding(input_dim=time_embedding_dim, output_dim=self.batch_size)
-        self.text_projection = Dense(units=text_embedding_dim)
-        self.time_embedding_dim = time_embedding_dim
-        self.text_embedding_dim = text_embedding_dim       
+        self.time_embedding = Embedding(input_dim=self.batch_size, output_dim=self.batch_size)
+        self.num_heads = num_heads
+        self.d_model = d_model
+        self.multi_head_attention = MultiHeadAttention(d_model=self.d_model, num_heads=self.num_heads)
+        self.text_embedding_dim = text_embedding_dim
+        self.flatten = Flatten()       
 
             
     
             
-    def build_unet_block(self, dim, dim2, width, height, dim_4):
-        inputs = Input(shape=(width, height, dim2 + dim * self.text_embedding_dim + dim_4))
+    def build_unet_block(self, width, height, dim2, dim3):
+        inputs = Input(shape=(width, height, dim2))
 
         def conv_block(x, filters, kernel_size, strides=1, padding='same', activation='relu'):
             x = Conv2D(filters, kernel_size, strides=strides, padding=padding)(x)
@@ -223,7 +225,7 @@ class UNetDiffusionModule(tf.keras.Model):
 
         exaggeration = Conv2D(32, kernel_size=7, strides=1, padding='same', activation='sigmoid')(deconv6)
         transition = Flatten()(exaggeration)
-        outputs = Dense(dim2)(transition)
+        outputs = Dense(dim3)(transition)
         generator = Model(inputs=inputs, outputs=outputs)
         return generator
 
@@ -232,26 +234,18 @@ class UNetDiffusionModule(tf.keras.Model):
     def call(self, noisy_images, time_step, text_embeddings):
             
         time_embedding = self.time_embedding(time_step)
-        text_embedding = self.text_projection(text_embeddings)
-        dim_1 = tf.TensorShape(text_embedding.shape).as_list()[1]
-        dim_2 = tf.TensorShape(noisy_images.shape).as_list()[-1]
-        dim_3 = tf.TensorShape(text_embedding.shape).as_list()[0]
-        dim_4 = tf.TensorShape(time_step.shape).as_list()[0]
-        self.unet_block = self.build_unet_block(dim_1, dim_2, self.width, self.height, dim_4)
+        text_embedding = self.flatten(text_embedding)
+        weighted_latent_vector = self.multi_head_attention(noisy_images, text_embedding, text_embedding)
+        eigenvector = Concatenate(axis=-1)([weighted_latent_vector, time_embedding])
+        dim_1 = tf.TensorShape(eigenvector.shape).as_list()[0]
+        dim_2 = tf.TensorShape(eigenvector.shape).as_list()[-1]
+        dim_3 = tf.TensorShape(noisy_images.shape).as_list()[-1]
+        self.unet_block = self.build_unet_block(self.width, self.height, dim_2, dim_3)
             
-        time_embedding_reshaped = tf.reshape(time_embedding, [self.batch_size, 1, 1, dim_4])
+        eigenvector_reshaped = tf.reshape(eigenvector, [dim_1, 1, 1, dim_2])
             
-        time_embedding_tiled = tf.tile(time_embedding_reshaped, [1, self.width, self.height, 1]) 
+        d1 = tf.tile(eigenvector_reshaped, [1, self.width, self.height, 1]) 
 
-        noisy_images_reshaped = tf.reshape(noisy_images, [self.batch_size, 1, 1, dim_2])
-        noisy_images_tiled = tf.tile(noisy_images_reshaped, [1, self.width, self.height, 1])            
-            
-            
-        text_embedding_reshaped = tf.reshape(text_embedding, [self.batch_size, 1, 1, self.text_embedding_dim*dim_1])
-        text_embedding_tiled = tf.tile(text_embedding_reshaped, [1, self.width, self.height, 1]) 
-        
-            
-        d1 = Concatenate(axis=-1)([noisy_images_tiled, time_embedding_tiled, text_embedding_tiled]) 
         d1 = self.unet_block(d1)
         return d1
 
@@ -285,21 +279,17 @@ class ImageDecoder(tf.keras.Model):
 
     
 class Text2ImageDiffusionModel(tf.keras.Model):
-    def __init__(self, vocab_size, num_batch, width, height, channel, alpha, num_heads=8, d_model=512, input_shape = 512, coefficient_step=4):
+    def __init__(self, vocab_size, num_batch, width, height, channel, alpha, input_shape = 512):
         super(Text2ImageDiffusionModel, self).__init__()
         self.text_encoder = TextEncoder(vocab_size)
         self.image_encoder = ImageEncoder()
-        self.coefficient_step = coefficient_step
         self.batch_size = num_batch
-        self.time_embedding = Embedding(input_dim=input_shape, output_dim=self.batch_size*self.coefficient_step)
+        self.time_embedding = Embedding(input_dim=input_shape, output_dim=self.batch_size**2)
         self.width = width
         self.channel = channel
         self.height = height
         self.alpha = alpha
-        self.num_heads = num_heads
-        self.d_model = d_model
         self.diffusion_module = UNetDiffusionModule(self.batch_size, self.width//32, self.height//32)
-        self.multi_head_attention = MultiHeadAttention(d_model=self.d_model, num_heads=self.num_heads)
         
     def call(self, text_inputs, image_inputs, time_steps):
         text_embeddings = self.text_encoder(text_inputs)
@@ -317,7 +307,6 @@ class Text2ImageDiffusionModel(tf.keras.Model):
         images_tensor = tf.stack(generated_images_list, axis=0)
         latent_gaussian_tensor  = tf.stack(gaussian_list, axis=0)
         generated_list = []
-        text_embeddings, _ = self.multi_head_attention(text_embeddings, text_embeddings, text_embeddings)
         generated_images = self.diffusion_module(images_tensor[-1], time_steps_vector[-1], text_embeddings)
         generated_list.append(generated_images)
         varied_tensor = 1/np.sqrt(self.alpha)*(images_tensor[-1] - (1 - self.alpha)/np.sqrt(1 - self.alpha**float(len(images_tensor))) * generated_images) + np.sqrt(1 - self.alpha) * latent_gaussian_tensor[len(images_tensor) - 2]
