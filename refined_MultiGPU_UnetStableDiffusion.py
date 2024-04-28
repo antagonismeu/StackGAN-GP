@@ -463,9 +463,10 @@ def main_stage1():
 
 
 
-    def insurance(x1, x2, x3) :
+    def insurance(x1, model1, x2) :
         with open("./contemporary_checkpoints/last_latent_vector.pkl", "wb") as in_f :
-            pickle.dump((x1, x2, x3), in_f)
+            pickle.dump((x1, x2), in_f)
+            model1.save_weights(f'./contemporary_checkpoints/InsuranceModel')
 
 
 
@@ -536,6 +537,7 @@ def main_stage2(datum, model1, magnitude) :
         image_decoder.compile(optimizer=optimizer, loss=loss_fn)
 
     print(f'Number of available GPUs: {strategy.num_replicas_in_sync}')
+
 
 
     def compute_loss_stage2(self, labels, predictions, model_losses, loss_fn):
@@ -624,8 +626,15 @@ def main_stage2(datum, model1, magnitude) :
 def main(mode="restart"):
     def load_state():
         try:
+            images_path_2 = './images'
+            csv_path_2 = 'descriptions.csv'
+            alpha = 0.828
+            _, vocab_size, _ = load_dataset(csv_path_2, images_path_2, GLOBAL_BATCH_SIZE, height, width)
+            model_ = Text2ImageDiffusionModel(vocab_size, BATCH_SIZE, width, height, channel, alpha)
+            model_.load_weights('./contemporary_checkpoints/InsuranceModel')
             with open("./contemporary_checkpoints/last_latent_vector.pkl", "rb") as f:
-                return pickle.load(f)
+                x1, x2 = pickle.load(f)
+            return x1, model_, x2                         
         except FileNotFoundError:
             return None
 
