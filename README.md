@@ -2,7 +2,21 @@
 
 **UnetStableDiffusion** is a model incorporating the Structure:**Unet**. Current  code version: **4.0.0**
 
-Here is the brief summary of the number of parameters in both the DiffusionModel and DecoderModel:
+Run the **SCRIPT** : 
+**1.**IF you want to run the code at a fresh start
+```python
+python3 refined_MultiGPU_UnetStableDiffusion.py restart
+```
+**2.**IF you want to continue the code at the last unexpected collapse
+```python
+python3 refined_MultiGPU_UnetStableDiffusion.py recover
+```
+**3.** if you seek for the more specified instruction
+```python
+python3 refined_MultiGPU_UnetStableDiffusion.py --help[--h]
+```
+
+**Model Information**Here is the brief summary of the number of parameters in both the DiffusionModel and DecoderModel:
 
 ### Text2ImageDiffusionModel
 

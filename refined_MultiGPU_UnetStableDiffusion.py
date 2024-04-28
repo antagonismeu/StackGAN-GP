@@ -9,6 +9,7 @@ try:
     from tensorflow.keras.optimizers.legacy import Adam
     from tensorflow.keras.losses import MeanSquaredError
     import pandas as pd
+    import pickle, argparse
     from PIL import Image
     import numpy as np
 except :
@@ -39,6 +40,7 @@ def configuration() :
     os.makedirs('./log', exist_ok=True)
     os.makedirs('./models', exist_ok=True)
     os.makedirs('./samples', exist_ok=True)
+    os.makedirs('./contemporary_checkpoints', exist_ok=True)
 
 
 class TextEncoder(tf.keras.Model):
@@ -460,8 +462,14 @@ def main_stage1():
         return per_replicas_losses, output
 
 
-    predicted_latent_list = []
 
+    def insurance(x1, x2, x3) :
+        with open("./contemporary_checkpoints/last_latent_vector.pkl", "wb") as in_f :
+            pickle.dump((x1, x2, x3), in_f)
+
+
+
+    predicted_latent_list = []
 
 
     for epoch in range(epochs):
@@ -478,6 +486,7 @@ def main_stage1():
             total_losses += per_loss
             print(f'per_batch_loss:{per_loss} epoch:{epoch} batch_index:{num_+1}')
         predicted_latent_list.append(sub_ouput)
+        insurance(predicted_latent_list, text2image_model, gross_magnitude)
         train_loss = total_losses / num
 
         print(f'Epoch {epoch + 1}/{epochs + 1}, Loss: {train_loss.numpy()}')
@@ -612,13 +621,25 @@ def main_stage2(datum, model1, magnitude) :
 
 
 
+def main(mode="restart"):
+    def load_state():
+        try:
+            with open("./contemporary_checkpoints/last_latent_vector.pkl", "rb") as f:
+                return pickle.load(f)
+        except FileNotFoundError:
+            return None
 
-def main():
-    subsequent_datum, model, magnitude = main_stage1()
-    main_stage2(subsequent_datum, model, magnitude)
+    if mode == 'restart':
+        subsequent_datum, model, magnitude = main_stage1()
+        main_stage2(subsequent_datum, model, magnitude)
+    elif mode == 'recover':
+        subsequent_datum, model, magnitude = load_state()
+        main_stage2(subsequent_datum, model, magnitude)
 
 
-
-
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run the main stages of the program.")
+    parser.add_argument("mode", type=str, choices=["restart", "recover"],
+                        help="Mode to run the program. 'train' for training mode and 'recover' for recovery mode.")
+    args = parser.parse_args()
+    main(args.mode)
