@@ -17,7 +17,7 @@ python3 refined_MultiGPU_UnetStableDiffusion.py recover
 **3.** 
 IF you seek for the more specified instruction
 ```python
-python3 refined_MultiGPU_UnetStableDiffusion.py --help[--h]
+python3 refined_MultiGPU_UnetStableDiffusion.py --help[-h]
 ```
 
 **Model Information**Here is the brief summary of the number of parameters in both the DiffusionModel and DecoderModel:
