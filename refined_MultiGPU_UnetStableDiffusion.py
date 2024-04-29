@@ -463,31 +463,31 @@ def main_stage1():
 
 
 
-    def insurance(x1, model1, x2) :
+    def insurance(model1, x1) :
         with open("./temporary_checkpoints/last_latent_vector.pkl", "wb") as in_f :
-            pickle.dump((x1, x2), in_f)
-            model1.save_weights(f'./temporary_checkpoints/InsuranceModel')
+            pickle.dump(x1, in_f)
+        model1.save_weights(f'./temporary_checkpoints/InsuranceModel')
+        converter = tf.lite.TFLiteConverter.from_keras_model(model1)
+        tflite_model = converter.convert()
+
+        with open(f'./temporary_checkpoints/InsuranceModel.tflite', 'wb') as f:
+            f.write(tflite_model)
 
 
 
-    predicted_latent_list = []
 
 
     for epoch in range(epochs):
-        sub_ouput = []
         sparse_datum = strategy.experimental_distribute_dataset(dataset)
         iterator = iter(sparse_datum)
 
         num, total_losses = 0, 0
         for num_, batch in enumerate(iterator):
-            per_loss, output = distributed_training(batch)
-            target_image = batch[0]
-            sub_ouput.append((target_image, output))
+            per_loss, _ = distributed_training(batch)
             num += 1
             total_losses += per_loss
             print(f'per_batch_loss:{per_loss} epoch:{epoch} batch_index:{num_+1}')
-        predicted_latent_list.append(sub_ouput)
-        insurance(predicted_latent_list, text2image_model, gross_magnitude)
+        insurance(text2image_model, gross_magnitude)
         train_loss = total_losses / num
 
         print(f'Epoch {epoch + 1}/{epochs + 1}, Loss: {train_loss.numpy()}')
@@ -508,7 +508,7 @@ def main_stage1():
         -----------------------------
 
     ''')
-    return predicted_latent_list, text2image_model, gross_magnitude
+    return text2image_model, gross_magnitude
 
 
 
@@ -573,7 +573,7 @@ def main_stage2(datum, model1, magnitude) :
         individual_targets = []
         individual_outputs = []
 
-        for batch_targets, batch_output in datum[-1]:
+        for batch_targets, batch_output in datum :
             individual_targets.extend(tf.unstack(batch_targets))
             individual_outputs.extend(tf.unstack(batch_output))
         
@@ -624,19 +624,54 @@ def main_stage2(datum, model1, magnitude) :
 
 
 def main(mode="restart"):
+    time_steps = 512
+
+
+    def simulation(intermediates, raw_datum, magnitude, time_steps) :
+        iterator = iter(raw_datum)
+        intermediates_list = []
+        for num_, batch in enumerate(iterator):
+            try :
+                images, line = batch[0], batch[1]
+                inputs = [tokenizer.word_index[i] for i in line.split(" ")]
+                inputs = tf.keras.preprocessing.sequence.pad_sequences([inputs], maxlen=magnitude, padding="post")
+                inputs = tf.convert_to_tensor(inputs)
+                initial_image = tf.random.normal(shape=[1, width, height, 3])  
+                initial_image = tf.clip_by_value(initial_image, -1, 1)
+                time_steps_ = tf.range(0, time_steps, dtype=tf.float32)
+                text_embeddings = intermediates.text_encoder(inputs)
+                time_steps_vector = intermediates.time_embedding(time_steps_)
+                latent_images = intermediates.image_encoder(initial_image)                    
+                generated_gaussian = intermediates.diffusion_module(latent_images, time_steps_vector[-1], text_embeddings)
+                varied_tensor = 1/np.sqrt(intermediates.alpha)*(latent_images - (1 - intermediates.alpha)/np.sqrt(1 - intermediates.alpha**float(len(time_steps_))) * generated_gaussian) + np.sqrt(1 - intermediates.alpha) * generated_gaussian
+                for index in reversed(range(1, len(time_steps_) - 1)) :
+                    generated_gaussian= intermediates.diffusion_module(varied_tensor, time_steps_vector[index], text_embeddings)
+                    varied_tensor = 1/np.sqrt(intermediates.alpha)*(varied_tensor - (1 - intermediates.alpha)/np.sqrt(1 - intermediates.alpha**float(index)) * generated_gaussian) + np.sqrt(1 - intermediates.alpha) * generated_gaussian
+                intermediates_list.append((images, varied_tensor))
+                print(f'--------No.{num_ + 1}generation successful !--------')
+            except :
+                print(f'--------No.{num_ + 1}generation failed(All Atempts Had Tried !)--------')
+                continue
+        return intermediates_list
+
+
+
     def load_state():
         try:
             images_path_2 = './images'
             csv_path_2 = 'descriptions.csv'
             alpha = 0.828
-            _, vocab_size, _ = load_dataset(csv_path_2, images_path_2, GLOBAL_BATCH_SIZE, height, width)
+            original_datum, vocab_size, _ = load_dataset(csv_path_2, images_path_2, GLOBAL_BATCH_SIZE, height, width)
             model_ = Text2ImageDiffusionModel(vocab_size, BATCH_SIZE, width, height, channel, alpha)
             model_.load_weights('./temporary_checkpoints/InsuranceModel')
             with open("./temporary_checkpoints/last_latent_vector.pkl", "rb") as f:
-                x1, x2 = pickle.load(f)
-            return x1, model_, x2                         
+                x1 = pickle.load(f)
+            latent_datum = simulation(model_, original_datum, x1, time_steps)
+            return latent_datum, model_, x1                        
         except FileNotFoundError:
             return None
+
+
 
     if mode == 'restart':
         subsequent_datum, model, magnitude = main_stage1()
@@ -644,6 +679,9 @@ def main(mode="restart"):
     elif mode == 'recover':
         subsequent_datum, model, magnitude = load_state()
         main_stage2(subsequent_datum, model, magnitude)
+
+
+
 
 
 if __name__ == "__main__":
