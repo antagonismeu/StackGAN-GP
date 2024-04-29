@@ -476,8 +476,8 @@ def main_stage1():
 
 
 
-
     for epoch in range(epochs):
+        sub_ouput = []
         sparse_datum = strategy.experimental_distribute_dataset(dataset)
         iterator = iter(sparse_datum)
 
@@ -674,7 +674,11 @@ def main(mode="restart"):
 
 
     if mode == 'restart':
-        subsequent_datum, model, magnitude = main_stage1()
+        model, magnitude = main_stage1()
+        images_path_3 = './images'
+        csv_path_3 = 'descriptions.csv'
+        original_datum, _, _ = load_dataset(csv_path_3, images_path_3, GLOBAL_BATCH_SIZE, height, width)
+        subsequent_datum = simulation(model, original_datum, len(magnitude), time_steps)
         main_stage2(subsequent_datum, model, magnitude)
     elif mode == 'recover':
         subsequent_datum, model, magnitude = load_state()
