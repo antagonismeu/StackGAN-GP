@@ -477,7 +477,6 @@ def main_stage1():
 
 
     for epoch in range(epochs):
-        sub_ouput = []
         sparse_datum = strategy.experimental_distribute_dataset(dataset)
         iterator = iter(sparse_datum)
 
