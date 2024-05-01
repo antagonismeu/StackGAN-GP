@@ -161,93 +161,139 @@ class UNetDiffusionModule(tf.keras.Model):
         self.batch_size = num_batch 
         self.width = width
         self.height = height          
-        self.time_embedding = Embedding(input_dim=self.batch_size, output_dim=self.batch_size)
         self.num_heads = num_heads
         self.d_model = d_model
-        self.multi_head_attention = MultiHeadAttention(d_model=self.d_model, num_heads=self.num_heads)
-        self.text_embedding_dim = text_embedding_dim
-        self.flatten = Flatten()       
+        self.multi_head_attention = MultiHeadAttention(d_model=self.d_model, num_heads=self.num_heads)     
+        self.add = Add()
+        self.activation = Activation('relu')
+        self.batch_nomalization = BatchNormalization()
+        self.compression = Dense(512)           #latent_image[-1]
+        self.concatenate = Concatenate()
+        self.exaggeration = Conv2D(32, kernel_size=7, strides=1, padding='same', activation='sigmoid')
+        self.flatten = Flatten()
 
+        self.conv_blocks1 = [
+            Conv2D(64, 4, strides=2, padding='same'),
+            BatchNormalization(),
+            self.activation
+        ]
+        self.conv_blocks2 = [
+            Conv2D(128, 4, strides=2, padding='same'),
+            BatchNormalization(),
+            self.activation
+        ]
+        self.conv_blocks3 = [
+            Conv2D(256, 4, strides=2, padding='same'),
+            BatchNormalization(),
+            self.activation
+        ]
+        self.deconv_blocks1 = [
+            Conv2DTranspose(64, 4, strides=2, padding='same'),
+            BatchNormalization(),
+            self.activation
+        ]
+        self.deconv_blocks1_ = [
+            Conv2DTranspose(64, 4, strides=2, padding='same'),
+            BatchNormalization(),
+            self.activation
+        ]
+        self.deconv_blocks2 = [
+            Conv2DTranspose(128, 4, strides=2, padding='same'),
+            BatchNormalization(),
+            self.activation
+        ]
+        self.residual_block1 = [
+            Conv2D(128, 3, strides=1, padding='same'),
+            BatchNormalization(),
+            self.activation,
+            Conv2D(128, 3, strides=1, padding='same'),
+            BatchNormalization()
+        ]
+        self.residual_block2 = [
+            Conv2D(256, 3, strides=1, padding='same'),
+            BatchNormalization(),
+            self.activation,
+            Conv2D(256, 3, strides=1, padding='same'),
+            BatchNormalization()
+        ]
+
+
+
+    def call(self, noisy_images, time_embedding, text_embedding):
             
-    
-            
-    def build_unet_block(self, width, height, dim2, dim3):
-        inputs = Input(shape=(width, height, dim2))
-
-        def conv_block(x, filters, kernel_size, strides=1, padding='same', activation='relu'):
-            x = Conv2D(filters, kernel_size, strides=strides, padding=padding)(x)
-            x = BatchNormalization()(x)
-            x = Activation(activation)(x)
-            return x
-
-        def deconv_block(x, filters, kernel_size, strides=2, padding='same', activation='relu'):
-            x = Conv2DTranspose(filters, kernel_size, strides=strides, padding=padding)(x)
-            x = BatchNormalization()(x)
-            x = Activation(activation)(x)
-            return x
-
-        def residual_block(x, filters, kernel_size=3, strides=1, padding='same', activation='relu'):
-            x1 = Conv2D(filters, kernel_size, strides=strides, padding=padding)(x)
-            x1 = BatchNormalization()(x1)
-            x1 = Activation(activation)(x1)
-            x1 = Conv2D(filters, kernel_size, strides=1, padding='same')(x1)
-
-            x1 = BatchNormalization()(x1)
-            x = Add()([x, x1])
-            x = Activation(activation)(x)
-            return x
-
-        conv1 = conv_block(inputs, 64, 4, 2)  
-        conv2 = conv_block(conv1, 128, 4, 2)  
-
-        conv2 = residual_block(conv2, 128)
-        conv2 = residual_block(conv2, 128)
-
-        conv3 = conv_block(conv2, 256, 4, 2)  
-
-        conv3 = residual_block(conv3, 256)
-        conv3 = residual_block(conv3, 256)
-
-        deconv4 = deconv_block(conv3, 128, 4, 2)  
-        deconv4 = Concatenate()([deconv4, conv2])
-
-        deconv4 = residual_block(deconv4, 256)
-        deconv4 = residual_block(deconv4, 256)
-
-        deconv5 = deconv_block(deconv4, 64, 4, 2)  
-        deconv5 = Concatenate()([deconv5, conv1])
-
-        deconv5 = residual_block(deconv5, 128)
-        deconv5 = residual_block(deconv5, 128)
-
-        deconv6 = deconv_block(deconv5, 64, 4, 2)
-
-        exaggeration = Conv2D(32, kernel_size=7, strides=1, padding='same', activation='sigmoid')(deconv6)
-        transition = Flatten()(exaggeration)
-        outputs = Dense(dim3)(transition)
-        generator = Model(inputs=inputs, outputs=outputs)
-        return generator
-
-
-            
-    def call(self, noisy_images, time_step, text_embeddings):
-            
-        time_embedding = self.time_embedding(time_step)
-        text_embedding = self.flatten(text_embeddings)
-        time_embedding = tf.transpose(time_embedding, [1, 0])
         weighted_latent_vector, _ = self.multi_head_attention(noisy_images, text_embedding, text_embedding)
         eigenvector = Concatenate(axis=-1)([weighted_latent_vector, time_embedding])
         dim_1 = tf.TensorShape(eigenvector.shape).as_list()[0]
         dim_2 = tf.TensorShape(eigenvector.shape).as_list()[-1]
         dim_3 = tf.TensorShape(noisy_images.shape).as_list()[-1]
-        self.unet_block = self.build_unet_block(self.width, self.height, dim_2, dim_3)
             
         eigenvector_reshaped = tf.reshape(eigenvector, [dim_1, 1, 1, dim_2])
             
-        d1 = tf.tile(eigenvector_reshaped, [1, self.width, self.height, 1]) 
+        d1 = tf.tile(eigenvector_reshaped, [1, self.width, self.height, 1])
 
-        d1 = self.unet_block(d1)
-        return d1
+        for layer in self.conv_blocks1 :
+            d1 = layer(d1)
+        d2 = d1
+        for layer in self.conv_blocks2 :
+            d2 = layer(d2)
+        d2_ = d2
+        for layer in self.residual_block1 :
+            d2_ = layer(d2_)
+        d2 = self.add([d2, d2_])
+        d2 = self.activation(d2)
+        d2_ = d2
+        for layer in self.residual_block1 :
+            d2_ = layer(d2)
+        d2 = self.add([d2, d2_])
+        d2 = self.activation(d2)
+        d3 = d2
+        for layer in self.conv_blocks3 :
+            d3 = layer(d3)
+        d3_ = d3
+        for layer in self.residual_block2 :
+            d3_ = layer(d3_)
+        d3 = self.add([d3, d3_])
+        d3 = self.activation(d3)
+        d3_ = d3        
+        for layer in self.residual_block2 :
+            d3_ = layer(d3_)
+        d3 = self.add([d3, d3_])
+        d3 = self.activation(d3)
+        d4 = d3
+        for layer in self.deconv_blocks2 :
+            d4 = layer(d4)
+        d4 = self.concatenate([d4, d2])
+        d4_ = d4
+        for layer in self.residual_block2 :
+            d4_ = layer(d4_)
+        d4 = self.add([d4, d4_])
+        d4 = self.activation(d4)
+        d4_ = d4
+        for layer in self.residual_block2 :
+            d4_ = layer(d4_)
+        d4 = self.add([d4, d4_])
+        d4 = self.activation(d4)
+        d5 = d4 
+        for layer in self.deconv_blocks1 :
+            d5 = layer(d5) 
+        d5 = self.concatenate([d5, d1])
+        d5_ = d5
+        for layer in self.residual_block1 :
+            d5_ = layer(d5_)
+        d5 = self.add([d5, d5_])
+        d5 = self.activation(d5)
+        d5_ = d5
+        for layer in self.residual_block1 :
+            d5_ = layer(d5_)
+        d5 = self.add([d5, d5_])
+        d5 = self.activation(d5)
+        d6 = d5
+        for layer in self.deconv_blocks1_ :
+            d6 = layer(d6) 
+        d6 = self.exaggeration(d6)
+        d6 = self.flatten(d6)
+        outputs = self.compression(d6)                            
+        return outputs
 
 
 
@@ -284,7 +330,9 @@ class Text2ImageDiffusionModel(tf.keras.Model):
         self.text_encoder = TextEncoder(vocab_size)
         self.image_encoder = ImageEncoder()
         self.batch_size = num_batch
-        self.time_embedding = Embedding(input_dim=input_shape, output_dim=self.batch_size**2)
+        self.time_embedding = Embedding(input_dim=input_shape, output_dim=self.batch_size)
+        self.per_time_embedding = Embedding(input_dim=self.batch_size, output_dim=self.batch_size**2)
+        self.flatten = Flatten()
         self.width = width
         self.channel = channel
         self.height = height
@@ -307,29 +355,37 @@ class Text2ImageDiffusionModel(tf.keras.Model):
         images_tensor = tf.stack(generated_images_list, axis=0)
         latent_gaussian_tensor  = tf.stack(gaussian_list, axis=0)
         generated_list = []
-        generated_images = self.diffusion_module(images_tensor[-1], time_steps_vector[-1], text_embeddings)
+        generated_images = self.diffusion_module(images_tensor[-1], self.per_time_embedding(time_steps_vector[-1]), self.flatten(text_embeddings))
         generated_list.append(generated_images)
         varied_tensor = 1/np.sqrt(self.alpha)*(images_tensor[-1] - (1 - self.alpha)/np.sqrt(1 - self.alpha**float(len(images_tensor))) * generated_images) + np.sqrt(1 - self.alpha) * latent_gaussian_tensor[len(images_tensor) - 2]
         for index in reversed(range(1, len(images_tensor) - 1)) :
-            generated_images = self.diffusion_module(varied_tensor, time_steps_vector[index], text_embeddings)
+            generated_images = self.diffusion_module(varied_tensor, self.per_time_embedding(time_steps_vector[index]), self.flatten(text_embeddings))
             generated_list.append(generated_images)
             varied_tensor = 1/np.sqrt(self.alpha)*(varied_tensor - (1 - self.alpha)/np.sqrt(1 - self.alpha**float(index)) * generated_images) + np.sqrt(1 - self.alpha) * latent_gaussian_tensor[index - 1]
         generated_tensor = tf.stack(generated_list, axis=0)
         return varied_tensor, generated_tensor, latent_gaussian_tensor
     
 
-    def compute_loss(self, labels, predictions, model_losses, loss_fn):
+    def compute_loss(self, labels, predictions, loss_fn, l2_reg_coeff=0.01):
         per_example_loss = loss_fn(labels[..., None], predictions[..., None])
         loss = tf.nn.compute_average_loss(per_example_loss)
-        if model_losses:
-            loss += tf.nn.scale_regularization_loss(tf.add_n(model_losses))
-        return loss / tf.cast(tf.reduce_prod(tf.shape(labels)[:]), tf.float32)
+
+        
+        l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in self.trainable_variables])
+        regularization_loss = l2_reg_coeff * l2_loss
+
+        total_loss = loss + regularization_loss
+
+        
+        total_loss /= tf.cast(tf.reduce_prod(tf.shape(labels)[:]), tf.float32)
+
+        return total_loss
 
 
-    @tf.function
+    
     def train_step(self, optimizer, targets, generated_images, loss_fn):
         with tf.GradientTape() as tape:
-            scaled_loss = self.compute_loss(targets, generated_images, self.loss, loss_fn)
+            scaled_loss = self.compute_loss(targets, generated_images, loss_fn)
         gradients = tape.gradient(scaled_loss, self.trainable_variables)
         optimizer.apply_gradients(zip(gradients, self.trainable_variables))
         return scaled_loss
@@ -539,12 +595,20 @@ def main_stage2(datum, model1, magnitude) :
 
 
 
-    def compute_loss_stage2(self, labels, predictions, model_losses, loss_fn):
+    def compute_loss_stage2(labels, predictions, loss_fn, l2_reg_coeff=0.01):
         per_example_loss = loss_fn(labels[..., None], predictions[..., None])
         loss = tf.nn.compute_average_loss(per_example_loss)
-        if model_losses:
-            loss += tf.nn.scale_regularization_loss(tf.add_n(model_losses))
-        return loss / tf.cast(tf.reduce_prod(tf.shape(labels)[:]), tf.float32)
+
+        
+        l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in image_decoder.trainable_variables])
+        regularization_loss = l2_reg_coeff * l2_loss
+
+        total_loss = loss + regularization_loss
+
+        
+        total_loss /= tf.cast(tf.reduce_prod(tf.shape(labels)[:]), tf.float32)
+
+        return total_loss
 
 
     @tf.function
