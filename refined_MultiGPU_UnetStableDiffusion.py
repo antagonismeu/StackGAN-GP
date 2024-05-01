@@ -617,7 +617,7 @@ def main_stage2(datum, model1, magnitude) :
             real_image, latent_image = batch[0], batch[1]
             print(real_image.shape, latent_image.shape)
             predicted_image = image_decoder(latent_image)
-            scaled_loss = compute_loss_stage2(real_image, predicted_image, image_decoder.loss, loss_fn)
+            scaled_loss = compute_loss_stage2(real_image, predicted_image, loss_fn)
         gradients = tape.gradient(scaled_loss, image_decoder.trainable_variables)
         optimizer.apply_gradients(zip(gradients, image_decoder.trainable_variables))
         return scaled_loss  
