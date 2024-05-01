@@ -33,8 +33,8 @@ Here is the brief summary of the number of parameters in both the DiffusionModel
 | embedding_2           | multiple     | 64          |
 | flatten_1             | multiple     | 0           |
 | u_net_diffusion_module| multiple     | 59,797,216  |
-| **Total**             |              | **104720416** |
-| Trainable params      |              | 104717472 |
+| **Total**             |              | **104,720,416** |
+| Trainable params      |              | 104,717,472 |
 | Non-trainable params |              | 2,944       |
 
 ### ImageDecoder
