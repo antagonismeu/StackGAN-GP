@@ -243,7 +243,7 @@ class UNetDiffusionModule(tf.keras.Model):
         d2 = self.activation(d2)
         d2_ = d2
         for layer in self.residual_block1 :
-            d2_ = layer(d2)
+            d2_ = layer(d2_)
         d2 = self.add([d2, d2_])
         d2 = self.activation(d2)
         d3 = d2
