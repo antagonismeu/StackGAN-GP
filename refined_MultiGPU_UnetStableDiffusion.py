@@ -507,6 +507,7 @@ def main_stage1():
             solo_loss = text2image_model.train_step(optimizer, targets[index], predictions[index], loss_fn)
             counter += 1
             total_loss += solo_loss
+            print(f'per_diffusion_loss:{total_loss} epoch:{epoch} batch_index:{num_+1} diffusion_step:{index}')
         loss = total_loss / counter
         return output, loss
 
