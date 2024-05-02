@@ -667,7 +667,7 @@ def main_stage2(datum, model1, magnitude) :
             log_file.write(f"Epoch {epoch + 1}, Batch Losses: {train_loss.numpy()}\n")
 
         if (epoch + 1) % save_interval == 0:
-            sentence = "city parks with workshops and outdoor classrooms"
+            sentence = "the brain's surface pulses emits a soft, ethereal light, drawing seekers of knowledge ever closer to its enigmatic depths"
             generate_image_from_text(sentence, model1, image_decoder, width, height, time_embedding_dim, save_path,
                                      magnitude, epoch + 1)
             image_decoder.save_weights(f'models/ImgDecoder{epoch + 1}')
