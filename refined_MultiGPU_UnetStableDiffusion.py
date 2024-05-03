@@ -85,7 +85,7 @@ class VAE(tf.keras.Model):
         self.decoder = [
             Dense(64, activation='relu'),
             Dense(128, activation='relu'),
-            Dense(256, activatiom='relu'),
+            Dense(256, activation='relu'),
             Dense(self.width*self.height*self.channel),
             Reshape(target_shape=(self.width, self.height, self.channel))
           ]
@@ -94,13 +94,16 @@ class VAE(tf.keras.Model):
         
     def encode(self, x):
         x = self.flatten_image(x)
-        mean, logvar = tf.split(self.encoder(x), num_or_size_splits=2, axis=1)
+        for layer in self.encoder :
+            x = layer(x)
+        mean, logvar = tf.split(x, num_or_size_splits=2, axis=1)
         return mean, logvar
     
 
     def decode(self, z):
-        logits = self.decoder(z)
-        return logits
+        for layer in self.decoder :
+            z = layer(z)
+        return z
 
         
     def reparameterize(self, mean, logvar):
@@ -157,7 +160,7 @@ class MultiHeadAttention(layers.Layer):
 
         q = self.apply_attention(q, mask)
         k = self.apply_attention(k, mask)
-        v= self.apply_attention(v, mask)
+        v = self.apply_attention(v, mask)
         
         q = self.wq(q)
         k = self.wk(k)
@@ -516,6 +519,7 @@ def main_stage1(latent_dim) :
         -----------------------------
 
     ''')
+    configuration()
     coversion_log_path = './log/VAE.log'
     strategy = tf.distribute.MirroredStrategy()
     epochs_stage = 5500
@@ -538,11 +542,6 @@ def main_stage1(latent_dim) :
         with open("./temporary_checkpoints/last_latent_vector.pkl", "wb") as in_f :
             pickle.dump((x1, x2), in_f)
         model1.save_weights(f'./temporary_checkpoints/InsuranceModel')
-        converter = tf.lite.TFLiteConverter.from_keras_model(model1)
-        tflite_model = converter.convert()
-
-        with open(f'./temporary_checkpoints/InsuranceModel.tflite', 'wb') as f:
-            f.write(tflite_model)
 
 
     @tf.function
@@ -566,7 +565,7 @@ def main_stage1(latent_dim) :
 
 
 
-    for epoch in epochs_stage :
+    for epoch in range(epochs_stage) :
         sparse_tensorized_data = strategy.experimental_distribute_dataset(dataset)
         iterator = iter(sparse_tensorized_data)
 
@@ -589,11 +588,6 @@ def main_stage1(latent_dim) :
                                     save_path, epoch + 1)
             vae.save_weights(f'models/VAE{epoch + 1}')
 
-            converter = tf.lite.TFLiteConverter.from_keras_model(vae)
-            tflite_model = converter.convert()
-
-            with open(f'models/VAE{epoch + 1}.tflite', 'wb') as f:
-                f.write(tflite_model)
     print('''
         -----------------------------
         ---Stage 1 Is Terminated-----  
@@ -614,7 +608,6 @@ def main_stage2(datum, vae, vocab_size, gross_magnitude, latent_dim):
         -----------------------------
 
     ''')
-    configuration()
     epochs2 = 10000
     alpha = 0.828
     save_path = './samples'
@@ -703,11 +696,6 @@ def main_stage2(datum, vae, vocab_size, gross_magnitude, latent_dim):
                                      gross_magnitude, epoch + 1)
             text2image_model.save_weights(f'models/UnetSD{epoch + 1}')
 
-            converter = tf.lite.TFLiteConverter.from_keras_model(text2image_model)
-            tflite_model = converter.convert()
-
-            with open(f'models/UnetSD{epoch + 1}.tflite', 'wb') as f:
-                f.write(tflite_model)
     print('''
         -----------------------------
         ---Stage 2 Is Terminated-----  
