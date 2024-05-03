@@ -41,6 +41,8 @@ def configuration() :
     os.makedirs('./models', exist_ok=True)
     os.makedirs('./samples', exist_ok=True)
     os.makedirs('./temporary_checkpoints', exist_ok=True)
+    os.makedirs('./VAE_results', exist_ok=True)
+
 
 
 class TextEncoder(tf.keras.Model):
@@ -56,32 +58,75 @@ class TextEncoder(tf.keras.Model):
         return text_embeddings
 
 
-class ImageEncoder(tf.keras.Model):
-    def __init__(self, input_shape=(WIDTH, HEIGHT, 3), output_dim=512):
-        super(ImageEncoder, self).__init__()
-        self.conv_blocks = [
-            layers.Conv2D(64, (3, 3), activation='relu', padding='same', input_shape=input_shape),
-            layers.MaxPooling2D((2, 2)),
-            layers.Conv2D(128, (3, 3), activation='relu', padding='same'),
-            layers.MaxPooling2D((2, 2)),
-            layers.Conv2D(256, (4, 4), activation='relu', padding='same'),
-            layers.MaxPooling2D((2, 2)),
-            layers.Conv2D(512, (4, 4), activation='relu', padding='same'),
-            layers.MaxPooling2D((2, 2)),
-            layers.Conv2D(1024, (4, 4), activation='relu', padding='same'),
-            layers.MaxPooling2D((2, 2)),
-        ]
-        self.flatten = layers.Flatten()
-        self.image_projection = layers.Dense(output_dim)
-        self.output_dim = output_dim
 
-    def call(self, inputs):
-        x = inputs
-        for layer in self.conv_blocks:
-            x = layer(x)
-        x = self.flatten(x)
-        latent_representation = self.image_projection(x)
-        return latent_representation
+
+
+
+class VAE(tf.keras.Model):
+    def __init__(self, latent_dim, width, height, channel):
+        super(VAE, self).__init__()
+        self.latent_dim = latent_dim
+        self.width = width
+        self.height = height
+        self.channel = channel
+        self.concatenate = Concatenate()
+        self.flatten_image = Flatten()
+        
+    
+        self.encoder = [
+            Dense(256, activation='relu'),
+            Dense(128, activation='relu'),
+            Dense(64, activation='relu'),
+            Dense(latent_dim + latent_dim)
+          ]
+        
+
+        
+        self.decoder = [
+            Dense(64, activation='relu'),
+            Dense(128, activation='relu'),
+            Dense(256, activatiom='relu'),
+            Dense(self.width*self.height*self.channel),
+            Reshape(target_shape=(self.width, self.height, self.channel))
+          ]
+
+
+        
+    def encode(self, x):
+        x = self.flatten_image(x)
+        mean, logvar = tf.split(self.encoder(x), num_or_size_splits=2, axis=1)
+        return mean, logvar
+    
+
+    def decode(self, z):
+        logits = self.decoder(z)
+        return logits
+
+        
+    def reparameterize(self, mean, logvar):
+        eps = tf.random.normal(shape=mean.shape)
+        return eps * tf.exp(logvar * .5) + mean
+    
+    def log_normal_pdf(self, sample, mean, logvar, raxis=1):
+        log2pi = tf.math.log(2. * np.pi)
+        return tf.reduce_sum(
+            -.5 * ((sample - mean) ** 2. * tf.exp(-logvar) + logvar + log2pi),
+            axis=raxis)
+        
+
+    def compute_loss(self, x):    
+        mean, logvar = self.encode(x)
+        z = self.reparameterize(mean, logvar)
+        x_logit = self.decode(z)
+        cross_ent = tf.nn.sigmoid_cross_entropy_with_logits(logits=x_logit, labels=x)
+        logpx_z = -tf.reduce_sum(cross_ent, axis=[1, 2, 3])
+        logpz = self.log_normal_pdf(z, 0., 0.)
+        logqz_x = self.log_normal_pdf(z, mean, logvar)
+        return -tf.reduce_mean(logpx_z + logpz - logqz_x)
+
+
+       
+
 
 
 
@@ -156,7 +201,7 @@ class MultiHeadAttention(layers.Layer):
 
 
 class UNetDiffusionModule(tf.keras.Model):
-    def __init__(self, num_batch, width, height, text_embedding_dim=128, num_heads=8, d_model=512):
+    def __init__(self, num_batch, width, height, d_model, num_heads=8):
         super(UNetDiffusionModule, self).__init__()
         self.batch_size = num_batch 
         self.width = width
@@ -167,7 +212,7 @@ class UNetDiffusionModule(tf.keras.Model):
         self.add = Add()
         self.activation = Activation('relu')
         self.batch_nomalization = BatchNormalization()
-        self.compression = Dense(512)           #latent_image[-1]
+        self.compression = Dense(1024)           #latent_image[-1]
         self.concatenate = Concatenate()
         self.exaggeration = Conv2D(32, kernel_size=7, strides=1, padding='same', activation='sigmoid')
         self.flatten = Flatten()
@@ -297,58 +342,36 @@ class UNetDiffusionModule(tf.keras.Model):
 
 
 
-class ImageDecoder(tf.keras.Model):
-    def __init__(self, output_channels):
-        super(ImageDecoder, self).__init__()
-        self.deconv_blocks = [
-            Conv2DTranspose(256, (4, 4), strides=(2, 2), padding='same', activation='relu'),
-            BatchNormalization(),
-            Conv2DTranspose(128, (4, 4), strides=(2, 2), padding='same', activation='relu'),
-            BatchNormalization(),
-            Conv2DTranspose(64, (4, 4), strides=(2, 2), padding='same', activation='relu'),
-            BatchNormalization(),
-            Conv2DTranspose(32, (4, 4), strides=(2, 2), padding='same', activation='relu'),         
-            BatchNormalization(),
-            Conv2DTranspose(output_channels, (4, 4), strides=(2, 2), padding='same', activation='sigmoid'),
-            BatchNormalization()
-        ]
-
-    def call(self, inputs):
-        inputs = tf.reshape(inputs, (tf.TensorShape(inputs.shape).as_list()[0], 1, 1, tf.TensorShape(inputs.shape).as_list()[-1]))
-        tiled_inputs = tf.tile(inputs, [1, 8, 8, 1])        
-        x = tiled_inputs
-        for layer in self.deconv_blocks:
-            x = layer(x)
-        return x
-
 
 
     
 class Text2ImageDiffusionModel(tf.keras.Model):
-    def __init__(self, vocab_size, num_batch, width, height, channel, alpha, input_shape = 512):
+    def __init__(self, VAE, vocab_size, num_batch, width, height, channel, alpha, d_model, input_shape = 512):
         super(Text2ImageDiffusionModel, self).__init__()
         self.text_encoder = TextEncoder(vocab_size)
-        self.image_encoder = ImageEncoder()
         self.batch_size = num_batch
         self.time_embedding = Embedding(input_dim=input_shape, output_dim=self.batch_size)
         self.per_time_embedding = Embedding(input_dim=self.batch_size, output_dim=self.batch_size**2)
         self.flatten = Flatten()
         self.width = width
+        self.vae = VAE
         self.channel = channel
         self.height = height
         self.alpha = alpha
-        self.diffusion_module = UNetDiffusionModule(self.batch_size, self.width//32, self.height//32)
+        self.diffusion_module = UNetDiffusionModule(self.batch_size, self.width//32, self.height//32, d_model)
         
     def call(self, text_inputs, image_inputs, time_steps):
         text_embeddings = self.text_encoder(text_inputs)
         time_steps_vector = self.time_embedding(time_steps)
-        latent_images = self.image_encoder(image_inputs)
+        mean, log_var = self.vae.encode(image_inputs)
+        latent_images = self.vae.reparameterize(mean, log_var)
         generated_images_list = []
         gaussian_list = []
         generated_images_list.append(latent_images)
         for index in range(len(time_steps_vector) - 1) :
             gaussian_vector = tf.random.normal(shape=(self.batch_size, self.width, self.height, self.channel), mean=0.0, stddev=1.0)
-            latent_gaussian_vector = self.image_encoder(gaussian_vector)
+            guassian_mean, guassian_logvar = self.vae.encode(gaussian_vector)
+            latent_gaussian_vector = self.vae.reparameterize(guassian_mean, guassian_logvar)
             latent_images = np.sqrt(self.alpha**float(index)) * latent_images + np.sqrt(1 - self.alpha**float(index)) * latent_gaussian_vector
             generated_images_list.append(latent_images)
             gaussian_list.append(latent_gaussian_vector)
@@ -428,6 +451,32 @@ def load_dataset(description_file, image_directory, batch_size, height, width):
     return dataset,  len(tokenizer.word_index) + 1, voc_li
 
 
+
+
+def vae_validation(description_file, model, image_directory, save_path, signature) :
+    try :
+        df = pd.read_csv(description_file)
+
+        test_image_path = f"{image_directory}/{df['image_id'][100]}"
+        def preprocess_image(image_path):
+            img = tf.io.read_file(image_path)
+            img = tf.image.decode_png(img, channels=3)  
+            img = tf.image.resize(img, [width, height])
+            img_array = tf.image.convert_image_dtype(img, tf.float32) / 127.5 - 1.0
+            return [img_array]
+        def postprocedure(img, path, signature) :
+            img = np.clip(img, 0, 255).astype(np.uint8)
+            Image.fromarray(img).save(f'{path}/{signature}.png')
+        image = preprocess_image(test_image_path)
+        mean, logvar = model.encode(image)
+        z = model.reparameterize(mean, logvar)
+        fake = model.decode(z)
+        postprocedure(fake[-1], save_path, signature)
+    except Exception as e:
+        print(f"Error encountered during VAE validation: {e}")
+
+
+
 def generate_image_from_text(sentence, model1, model2, width, height, time_steps, path, gross_range, signature, initial_image=None):
     try :                       
         inputs = [tokenizer.word_index[i] for i in sentence.split(" ")]
@@ -443,13 +492,14 @@ def generate_image_from_text(sentence, model1, model2, width, height, time_steps
         time_steps_ = tf.range(0, time_steps, dtype=tf.float32)
         text_embeddings = model1.text_encoder(inputs)
         time_steps_vector = model1.time_embedding(time_steps_)
-        latent_images = model1.image_encoder(initial_image)                    
+        sample_mean, sample_logvar = model2.encode(initial_image)
+        latent_images = model2.reparameterize(sample_mean, sample_logvar)                    
         generated_gaussian = model1.diffusion_module(latent_images, time_steps_vector[-1], text_embeddings)
         varied_tensor = 1/np.sqrt(model1.alpha)*(latent_images - (1 - model1.alpha)/np.sqrt(1 - model1.alpha**float(len(time_steps_))) * generated_gaussian) + np.sqrt(1 - model1.alpha) * generated_gaussian
         for index in reversed(range(1, len(time_steps_) - 1)) :
             generated_gaussian= model1.diffusion_module(varied_tensor, time_steps_vector[index], text_embeddings)
             varied_tensor = 1/np.sqrt(model1.alpha)*(varied_tensor - (1 - model1.alpha)/np.sqrt(1 - model1.alpha**float(index)) * generated_gaussian) + np.sqrt(1 - model1.alpha) * generated_gaussian
-        generated_images = model2(varied_tensor)
+        generated_images = model2.decode(varied_tensor)
         final_image = generated_images[-1]
         postprocedure(final_image, path, signature)
     except :
@@ -458,33 +508,142 @@ def generate_image_from_text(sentence, model1, model2, width, height, time_steps
 
 
 
-def main_stage1():
+
+def main_stage1(latent_dim) :
     print('''
         -----------------------------
         ---Stage 1 Is Initialized-----  
         -----------------------------
 
     ''')
-    configuration()
-    epochs = 10000
-    alpha = 0.828
-    time_embedding_dim = 512
+    coversion_log_path = './log/VAE.log'
+    strategy = tf.distribute.MirroredStrategy()
+    epochs_stage = 5500
     csv_path = 'descriptions.csv'
     images_path = './images'
+    save_path = './VAE_results'
+    save_interval = 50
+
+
+    with strategy.scope() :
+        dataset, vocab_size, magnitude = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
+        vae = VAE(latent_dim, width, height, channel)
+        optimizer = Adam(learning_rate=1e-4)
+        vae.compile(optimizer=optimizer)
+
+    print(f'Number of available GPUs: {strategy.num_replicas_in_sync}')
+
+
+    def insurance(model1, x1, x2) :
+        with open("./temporary_checkpoints/last_latent_vector.pkl", "wb") as in_f :
+            pickle.dump((x1, x2), in_f)
+        model1.save_weights(f'./temporary_checkpoints/InsuranceModel')
+        converter = tf.lite.TFLiteConverter.from_keras_model(model1)
+        tflite_model = converter.convert()
+
+        with open(f'./temporary_checkpoints/InsuranceModel.tflite', 'wb') as f:
+            f.write(tflite_model)
+
+
+    @tf.function
+    def train_step_stage1(batch) :
+        with tf.GradientTape() as tape :
+            image_inputs, _ = batch[0], batch[1]
+            print(image_inputs.shape)
+            scaled_loss = vae.compute_loss(image_inputs)
+        gradients = tape.gradient(scaled_loss, vae.trainable_variables)
+        optimizer.apply_gradients(zip(gradients, vae.trainable_variables))
+
+        return scaled_loss  
+
+
+    @tf.function
+    def distributed_train_stage1(datum) :
+        per_replicas_losses = strategy.run(train_step_stage1, args=(datum,))
+        per_replicas_losses = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replicas_losses, axis=None)
+        return per_replicas_losses
+
+
+
+
+    for epoch in epochs_stage :
+        sparse_tensorized_data = strategy.experimental_distribute_dataset(dataset)
+        iterator = iter(sparse_tensorized_data)
+
+        num, total_losses = 0, 0
+        for num_, batch in enumerate(iterator):
+            per_loss = distributed_train_stage1(batch)
+            num += 1
+            total_losses += per_loss
+            print(f'per_batch_loss:{per_loss} epoch:{epoch + 1} batch_index:{num_+1}')
+        insurance(vae, vocab_size, len(magnitude))
+        train_loss = total_losses / num
+
+
+        print(f'Epoch {epoch + 1}/{epochs_stage}, Loss: {train_loss.numpy()}')
+        with open(coversion_log_path, 'a') as log_file:
+            log_file.write(f"Epoch {epoch + 1}, Batch Losses: {train_loss.numpy()}\n")
+
+        if (epoch + 1) % save_interval == 0:
+            vae_validation(csv_path, vae, images_path,
+                                    save_path, epoch + 1)
+            vae.save_weights(f'models/VAE{epoch + 1}')
+
+            converter = tf.lite.TFLiteConverter.from_keras_model(vae)
+            tflite_model = converter.convert()
+
+            with open(f'models/VAE{epoch + 1}.tflite', 'wb') as f:
+                f.write(tflite_model)
+    print('''
+        -----------------------------
+        ---Stage 1 Is Terminated-----  
+        -----------------------------
+
+    ''')
+    return vae, vocab_size, len(magnitude)
+
+
+
+
+
+
+def main_stage2(datum, vae, vocab_size, gross_magnitude, latent_dim):
+    print('''
+        -----------------------------
+        ---Stage 2 Is Initialized-----  
+        -----------------------------
+
+    ''')
+    configuration()
+    epochs2 = 10000
+    alpha = 0.828
+    save_path = './samples'
+    time_embedding_dim = 512
 
     strategy = tf.distribute.MirroredStrategy()
     print(f'Number of available GPUs: {strategy.num_replicas_in_sync}')
 
 
-    def max_len(vectors) :
-        length = max(len(vec) for vec in vectors)
-        return length
 
     with strategy.scope():
-        dataset, vocab_size, magnitude = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
-        gross_magnitude = max_len(magnitude)
+        individual_targets = []
+        individual_outputs = []
 
-        text2image_model = Text2ImageDiffusionModel(vocab_size, BATCH_SIZE, width, height, channel, alpha)
+        for batch_targets, batch_output in datum :
+            individual_targets.extend(tf.unstack(batch_targets))
+            individual_outputs.extend(tf.unstack(batch_output))
+        
+        targets_tensor = tf.stack(individual_targets)
+        outputs_tensor = tf.stack(individual_outputs)
+
+            
+        targets_dataset = tf.data.Dataset.from_tensor_slices(targets_tensor)
+        outputs_dataset = tf.data.Dataset.from_tensor_slices(outputs_tensor)
+
+            
+        tensorized_data = tf.data.Dataset.zip((targets_dataset, outputs_dataset)).shuffle(buffer_size=max(len(datum), 512), reshuffle_each_iteration=True).batch(GLOBAL_BATCH_SIZE)
+
+        text2image_model = Text2ImageDiffusionModel(vae, vocab_size, BATCH_SIZE, width, height, channel, alpha, latent_dim)
         optimizer = Adam(learning_rate=0.001)
         loss_fn = MeanSquaredError(reduction=tf.keras.losses.Reduction.NONE)
 
@@ -520,22 +679,11 @@ def main_stage1():
 
 
 
-    def insurance(model1, x1) :
-        with open("./temporary_checkpoints/last_latent_vector.pkl", "wb") as in_f :
-            pickle.dump(x1, in_f)
-        model1.save_weights(f'./temporary_checkpoints/InsuranceModel')
-        converter = tf.lite.TFLiteConverter.from_keras_model(model1)
-        tflite_model = converter.convert()
-
-        with open(f'./temporary_checkpoints/InsuranceModel.tflite', 'wb') as f:
-            f.write(tflite_model)
 
 
-
-
-    for epoch in range(epochs):
-        sparse_datum = strategy.experimental_distribute_dataset(dataset)
-        iterator = iter(sparse_datum)
+    for epoch in range(epochs2):
+        sparse_tensorized_data = strategy.experimental_distribute_dataset(tensorized_data)
+        iterator = iter(sparse_tensorized_data)
 
         num, total_losses = 0, 0
         for num_, batch in enumerate(iterator):
@@ -543,139 +691,22 @@ def main_stage1():
             num += 1
             total_losses += per_loss
             print(f'per_batch_loss:{per_loss} epoch:{epoch} batch_index:{num_+1}')
-        insurance(text2image_model, gross_magnitude)
         train_loss = total_losses / num
 
-        print(f'Epoch {epoch + 1}/{epochs + 1}, Loss: {train_loss.numpy()}')
+        print(f'Epoch {epoch + 1}/{epochs2 + 1}, Loss: {train_loss.numpy()}')
         with open(log_file_path, 'a') as log_file:
             log_file.write(f"Epoch {epoch + 1}, Batch Losses: {train_loss.numpy()}\n")
 
-        if (epoch + 1) % save_interval == 0:
+        if (epoch + 1) % save_interval == 0 :
+            sentence = "the brain's surface pulses emits a soft, ethereal light, drawing seekers of knowledge ever closer to its enigmatic depths"
+            generate_image_from_text(sentence, text2image_model, vae, width, height, time_embedding_dim, save_path,
+                                     gross_magnitude, epoch + 1)
             text2image_model.save_weights(f'models/UnetSD{epoch + 1}')
 
             converter = tf.lite.TFLiteConverter.from_keras_model(text2image_model)
             tflite_model = converter.convert()
 
             with open(f'models/UnetSD{epoch + 1}.tflite', 'wb') as f:
-                f.write(tflite_model)
-    print('''
-        -----------------------------
-        ---Stage 1 Is Terminated-----  
-        -----------------------------
-
-    ''')
-    return text2image_model, gross_magnitude
-
-
-
-
-
-
-def main_stage2(datum, model1, magnitude) :
-    print('''
-        -----------------------------
-        ---Stage 2 Is Initialized-----  
-        -----------------------------
-
-    ''')
-    coversion_log_path = './log/ImgDecoder.log'
-    strategy = tf.distribute.MirroredStrategy()
-    time_embedding_dim = 512
-    epochs_stage2 = 1000
-    save_path = './samples'
-    save_interval = 50
-
-
-    with strategy.scope() :
-        image_decoder = ImageDecoder(output_channels=3)
-        optimizer = Adam(learning_rate=0.001)
-        loss_fn = MeanSquaredError(reduction=tf.keras.losses.Reduction.NONE)
-        image_decoder.compile(optimizer=optimizer, loss=loss_fn)
-
-    print(f'Number of available GPUs: {strategy.num_replicas_in_sync}')
-
-
-
-    def compute_loss_stage2(labels, predictions, loss_fn, l2_reg_coeff=0.01):
-        per_example_loss = loss_fn(labels[..., None], predictions[..., None])
-        loss = tf.nn.compute_average_loss(per_example_loss)
-
-        
-        l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in image_decoder.trainable_variables])
-        regularization_loss = l2_reg_coeff * l2_loss
-
-        total_loss = loss + regularization_loss
-
-        
-        total_loss /= tf.cast(tf.reduce_prod(tf.shape(labels)[:]), tf.float32)
-
-        return total_loss
-
-
-    @tf.function
-    def train_step_stage2(batch) :
-        with tf.GradientTape() as tape :
-            real_image, latent_image = batch[0], batch[1]
-            print(real_image.shape, latent_image.shape)
-            predicted_image = image_decoder(latent_image)
-            scaled_loss = compute_loss_stage2(real_image, predicted_image, loss_fn)
-        gradients = tape.gradient(scaled_loss, image_decoder.trainable_variables)
-        optimizer.apply_gradients(zip(gradients, image_decoder.trainable_variables))
-        return scaled_loss  
-
-
-    @tf.function
-    def distributed_train_stage2(datum) :
-        per_replicas_losses = strategy.run(train_step_stage2, args=(datum,))
-        per_replicas_losses = strategy.reduce(tf.distribute.ReduceOp.SUM, per_replicas_losses, axis=None)
-        return per_replicas_losses
-
-
-
-
-    for epoch in epochs_stage2 :
-        individual_targets = []
-        individual_outputs = []
-
-        for batch_targets, batch_output in datum :
-            individual_targets.extend(tf.unstack(batch_targets))
-            individual_outputs.extend(tf.unstack(batch_output))
-        
-        targets_tensor = tf.stack(individual_targets)
-        outputs_tensor = tf.stack(individual_outputs)
-
-            
-        targets_dataset = tf.data.Dataset.from_tensor_slices(targets_tensor)
-        outputs_dataset = tf.data.Dataset.from_tensor_slices(outputs_tensor)
-
-            
-        tensorized_data = tf.data.Dataset.zip((targets_dataset, outputs_dataset)).shuffle(buffer_size=max(len(datum), 512), reshuffle_each_iteration=True).batch(GLOBAL_BATCH_SIZE)
-        sparse_tensorized_data = strategy.experimental_distribute_dataset(tensorized_data)
-        iterator = iter(sparse_tensorized_data)
-
-        num, total_losses = 0, 0
-        for num_, batch in enumerate(iterator):
-            per_loss = distributed_train_stage2(batch)
-            num += 1
-            total_losses += per_loss
-            print(f'per_batch_loss:{per_loss} epoch:{epoch + 1} batch_index:{num_+1}')
-        train_loss = total_losses / num
-
-
-        print(f'Epoch {epoch + 1}/{epochs_stage2}, Loss: {train_loss.numpy()}')
-        with open(coversion_log_path, 'a') as log_file:
-            log_file.write(f"Epoch {epoch + 1}, Batch Losses: {train_loss.numpy()}\n")
-
-        if (epoch + 1) % save_interval == 0:
-            sentence = "the brain's surface pulses emits a soft, ethereal light, drawing seekers of knowledge ever closer to its enigmatic depths"
-            generate_image_from_text(sentence, model1, image_decoder, width, height, time_embedding_dim, save_path,
-                                     magnitude, epoch + 1)
-            image_decoder.save_weights(f'models/ImgDecoder{epoch + 1}')
-
-            converter = tf.lite.TFLiteConverter.from_keras_model(image_decoder)
-            tflite_model = converter.convert()
-
-            with open(f'models/ImgDecoder{epoch + 1}.tflite', 'wb') as f:
                 f.write(tflite_model)
     print('''
         -----------------------------
@@ -687,11 +718,12 @@ def main_stage2(datum, model1, magnitude) :
 
 
 
+
 def main(mode="restart"):
-    time_steps = 512
+    latent_dim = 1024 
 
 
-    def simulation(intermediates, raw_datum, magnitude, time_steps) :
+    def simulation(intermediates, raw_datum, magnitude) :
         iterator = iter(raw_datum)
         intermediates_list = []
         for num_, batch in enumerate(iterator):
@@ -700,18 +732,9 @@ def main(mode="restart"):
                 inputs = [tokenizer.word_index[i] for i in line.split(" ")]
                 inputs = tf.keras.preprocessing.sequence.pad_sequences([inputs], maxlen=magnitude, padding="post")
                 inputs = tf.convert_to_tensor(inputs)
-                initial_image = tf.random.normal(shape=[1, width, height, 3])  
-                initial_image = tf.clip_by_value(initial_image, -1, 1)
-                time_steps_ = tf.range(0, time_steps, dtype=tf.float32)
-                text_embeddings = intermediates.text_encoder(inputs)
-                time_steps_vector = intermediates.time_embedding(time_steps_)
-                latent_images = intermediates.image_encoder(initial_image)                    
-                generated_gaussian = intermediates.diffusion_module(latent_images, time_steps_vector[-1], text_embeddings)
-                varied_tensor = 1/np.sqrt(intermediates.alpha)*(latent_images - (1 - intermediates.alpha)/np.sqrt(1 - intermediates.alpha**float(len(time_steps_))) * generated_gaussian) + np.sqrt(1 - intermediates.alpha) * generated_gaussian
-                for index in reversed(range(1, len(time_steps_) - 1)) :
-                    generated_gaussian= intermediates.diffusion_module(varied_tensor, time_steps_vector[index], text_embeddings)
-                    varied_tensor = 1/np.sqrt(intermediates.alpha)*(varied_tensor - (1 - intermediates.alpha)/np.sqrt(1 - intermediates.alpha**float(index)) * generated_gaussian) + np.sqrt(1 - intermediates.alpha) * generated_gaussian
-                intermediates_list.append((images, varied_tensor))
+                mean, logvar = intermediates.encode(images)
+                z = intermediates.reparameterize(mean, logvar)
+                intermediates_list.append((z, inputs))
                 print(f'--------No.{num_ + 1}generation successful !--------')
             except :
                 print(f'--------No.{num_ + 1}generation failed(All Atempts Had Tried !)--------')
@@ -724,29 +747,29 @@ def main(mode="restart"):
         try:
             images_path_2 = './images'
             csv_path_2 = 'descriptions.csv'
-            alpha = 0.828
-            original_datum, vocab_size, _ = load_dataset(csv_path_2, images_path_2, GLOBAL_BATCH_SIZE, height, width)
-            model_ = Text2ImageDiffusionModel(vocab_size, BATCH_SIZE, width, height, channel, alpha)
+            original_datum, _, _ = load_dataset(csv_path_2, images_path_2, GLOBAL_BATCH_SIZE, height, width)
+            model_ = VAE(latent_dim, width, height, channel)
             model_.load_weights('./temporary_checkpoints/InsuranceModel')
             with open("./temporary_checkpoints/last_latent_vector.pkl", "rb") as f:
-                x1 = pickle.load(f)
-            latent_datum = simulation(model_, original_datum, x1, time_steps)
-            return latent_datum, model_, x1                        
+                x = pickle.load(f)
+                x1, x2 = x[0], x[1]
+            latent_datum = simulation(model_, original_datum, x2)
+            return latent_datum, model_, x1, x2                        
         except FileNotFoundError:
             return None
 
 
 
     if mode == 'restart':
-        model, magnitude = main_stage1()
+        model, vocab_size, magnitude = main_stage1(latent_dim)
         images_path_3 = './images'
         csv_path_3 = 'descriptions.csv'
         original_datum, _, _ = load_dataset(csv_path_3, images_path_3, GLOBAL_BATCH_SIZE, height, width)
-        subsequent_datum = simulation(model, original_datum, len(magnitude), time_steps)
-        main_stage2(subsequent_datum, model, magnitude)
+        subsequent_datum = simulation(model, original_datum, magnitude)
+        main_stage2(subsequent_datum, model, vocab_size, magnitude, latent_dim)
     elif mode == 'recover':
-        subsequent_datum, model, magnitude = load_state()
-        main_stage2(subsequent_datum, model, magnitude)
+        subsequent_datum, model, vocab_size, magnitude = load_state()
+        main_stage2(subsequent_datum, model, vocab_size, magnitude)
 
 
 
