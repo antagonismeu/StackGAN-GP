@@ -466,7 +466,7 @@ def vae_validation(description_file, model, image_directory, save_path, signatur
             img = tf.image.decode_png(img, channels=3)  
             img = tf.image.resize(img, [width, height])
             img_array = tf.image.convert_image_dtype(img, tf.float32) / 127.5 - 1.0
-            return [img_array]
+            return tf.expand_dims(img_array, axis=0)
         def postprocedure(img, path, signature) :
             img = np.clip(img, 0, 255).astype(np.uint8)
             Image.fromarray(img).save(f'{path}/{signature}.png')
@@ -532,7 +532,7 @@ def main_stage1(latent_dim) :
     with strategy.scope() :
         dataset, vocab_size, magnitude = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
         vae = VAE(latent_dim, width, height, channel)
-        optimizer = Adam(learning_rate=1e-4)
+        optimizer = Adam(learning_rate=3.7e-5)
         vae.compile(optimizer=optimizer)
 
     print(f'Number of available GPUs: {strategy.num_replicas_in_sync}')
@@ -551,6 +551,7 @@ def main_stage1(latent_dim) :
             print(image_inputs.shape)
             scaled_loss = vae.compute_loss(image_inputs)
         gradients = tape.gradient(scaled_loss, vae.trainable_variables)
+        gradients, _ = tf.clip_by_global_norm(gradients, clip_norm=1.0)
         optimizer.apply_gradients(zip(gradients, vae.trainable_variables))
 
         return scaled_loss  
