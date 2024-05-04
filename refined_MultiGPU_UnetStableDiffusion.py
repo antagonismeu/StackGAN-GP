@@ -62,9 +62,9 @@ class TextEncoder(tf.keras.Model):
 class ResBlock(tf.keras.Model):
     def __init__(self, filters, kernel_size):
         super(ResBlock, self).__init__()
-        self.conv1 = tf.keras.layers.Conv2D(filters, kernel_size, padding='same')
-        self.conv2 = tf.keras.layers.Conv2D(filters, kernel_size, padding='same')
-        self.activation = tf.keras.layers.ReLU()
+        self.conv1 = Conv2D(filters, kernel_size, padding='same')
+        self.conv2 = Conv2D(filters, kernel_size, padding='same')
+        self.activation = ReLU()
         
     def call(self, inputs):
         x = self.conv1(inputs)
@@ -86,7 +86,7 @@ class VAE(tf.keras.Model):
         self.flatten_image = Flatten()
         
     
-        self.encoder_conv = [
+        self.encoder = [
             Conv2D(32, kernel_size=4, strides=2, padding='same', activation='relu'),
             ResBlock(32, kernel_size=3),
             Conv2D(64, kernel_size=4, strides=2, padding='same', activation='relu'),
@@ -98,9 +98,9 @@ class VAE(tf.keras.Model):
         ]
         
         
-        self.decoder_dense = Dense(7*7*128, activation='relu')  # Adjust based on the desired output size
-        self.decoder_conv = [
-            Reshape((7, 7, 128)),
+        self.decoder_dense = Dense(32*32*13, activation='relu')  # Adjust based on the desired output size
+        self.decoder = [
+            Reshape((32, 32, 13)),
             Conv2DTranspose(128, kernel_size=4, strides=2, padding='same', activation='relu'),
             ResBlock(128, kernel_size=3),
             Conv2DTranspose(64, kernel_size=4, strides=2, padding='same', activation='relu'),
@@ -112,7 +112,6 @@ class VAE(tf.keras.Model):
 
         
     def encode(self, x):
-        x = self.flatten_image(x)
         for layer in self.encoder :
             x = layer(x)
         mean, logvar = tf.split(x, num_or_size_splits=2, axis=1)
