@@ -130,16 +130,17 @@ class VAE(tf.keras.Model):
             z = layer(z)
         return z
 
+    def call(self, x) :
+        mean, logvar = self.encode(x)
+        intermediate = self.reparameterize(mean, logvar)
+        z = self.decode(intermediate)
+        return z
+
         
     def reparameterize(self, mean, logvar):
         eps = tf.random.normal(shape=mean.shape)
         return eps * tf.exp(logvar * .5) + mean
     
-    def log_normal_pdf(self, sample, mean, logvar, raxis=1):
-        log2pi = tf.math.log(2. * np.pi)
-        return tf.reduce_sum(
-            -.5 * ((sample - mean) ** 2. * tf.exp(-logvar) + logvar + log2pi),
-            axis=raxis)
         
 
     def compute_loss(self, inputs): 
