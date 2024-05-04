@@ -38,7 +38,7 @@ def main():
 
 
 
-    model = VAE(latent_dim, width, height, output_channels=3)
+    model = VAE(latent_dim, width, height, channel)
 
     image_inputs_example = tf.random.uniform(shape=(BATCH_SIZE, width, height, channel))
 
