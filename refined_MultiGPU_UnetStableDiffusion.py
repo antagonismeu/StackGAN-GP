@@ -12,11 +12,15 @@ try:
     import pickle, argparse
     from PIL import Image
     import numpy as np
-except :
+except Exception as e:
+    print(f"Error encountered during loading required packages: {e}")
+    print('Attempt to reinitialize the interface.....')
     requirements = ['numpy', 'tensorflow', 'pandas', 'Pillow', 'transformers']
     for item in requirements :
         os.system(f'pip3 install {item}')
         print('Done!')
+
+
 
 gpu_devices = tf.config.experimental.list_physical_devices('GPU')
 if gpu_devices:
@@ -25,8 +29,10 @@ if gpu_devices:
 
 
 
+
 global WIDTH, HEIGHT, CHANNEL
-width, height = 256, 256                                  #INFERIOR BOUNDARY : width, height = 128, 128  
+width, height = 256, 256
+assert width >= 128, height >= 128                                  #INFERIOR BOUNDARY : width, height = 128, 128  
 WIDTH , HEIGHT = width, height
 BATCH_SIZE = 4
 channel = 3
@@ -529,8 +535,8 @@ def generate_image_from_text(sentence, model1, model2, width, height, time_steps
         generated_images = model2.decode(varied_tensor)
         final_image = generated_images[-1]
         postprocedure(final_image, path, signature)
-    except :
-        print('ERROR OCCURED')
+    except Exception as e:
+        print(f"Error encountered during generating image from the given text: {e}")
 
 
 
@@ -751,7 +757,8 @@ def main(mode="restart"):
                 z = intermediates.reparameterize(mean, logvar)
                 intermediates_list.append((z, inputs))
                 print(f'--------No.{num_ + 1}generation successful !--------')
-            except :
+            except Exception as e:
+                print(f"Error encountered during simulate latent vector{num_ + 1}: {e}")
                 print(f'--------No.{num_ + 1}generation failed(All Atempts Had Tried !)--------')
                 continue
         return intermediates_list
@@ -770,7 +777,8 @@ def main(mode="restart"):
                 x1, x2 = x[0], x[1]
             latent_datum = simulation(model_, original_datum, x2)
             return latent_datum, model_, x1, x2                        
-        except FileNotFoundError:
+        except Exception as e:
+            print(f"Error encountered during reactivating repository: {e}")
             return None
 
 
