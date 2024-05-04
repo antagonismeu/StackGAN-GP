@@ -3,7 +3,7 @@ try:
     import tensorflow as tf
     if tf.__version__.startswith('1'):
         raise ImportError("Please upgrade your TensorFlow to version 2.x")
-    from refined_MultiGPU_UnetStableDiffusion import Text2ImageDiffusionModel, load_dataset, ImageDecoder
+    from refined_MultiGPU_UnetStableDiffusion import Text2ImageDiffusionModel, load_dataset, VAE
 except :
     requirements = ['numpy', 'tensorflow', 'pandas', 'Pillow', 'transformers']
     for item in requirements :
@@ -29,6 +29,7 @@ def main():
     ''')
     alpha = 0.828
     time_embedding_dim = 512
+    latent_dim = 1024
     csv_path = 'descriptions.csv'
     images_path = './images'
 
@@ -36,25 +37,27 @@ def main():
     print(f'Number of available GPUs: {strategy.num_replicas_in_sync}')
 
 
-    _, vocab_size, _ = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
-    model = Text2ImageDiffusionModel(vocab_size, BATCH_SIZE, width, height, channel, alpha)
 
-    text_inputs_example = tf.random.uniform(shape=(BATCH_SIZE, vocab_size))
+    model = VAE(latent_dim, width, height, output_channels=3)
+
     image_inputs_example = tf.random.uniform(shape=(BATCH_SIZE, width, height, channel))
-    time_steps_example = tf.random.uniform(shape=(512,))
 
-    _ = model(text_inputs_example, image_inputs_example, time_steps_example)
+    _ = model(image_inputs_example)
 
     model.summary()
-    
+    _, vocab_size, _ = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
+    model2 = Text2ImageDiffusionModel(model, vocab_size, BATCH_SIZE, width, height, channel, alpha, latent_dim)
 
-    model2 = ImageDecoder(output_channels=3)
+    text_inputs_example = tf.random.uniform(shape=(BATCH_SIZE, vocab_size))
+    latent_inputs_example = tf.random.uniform(shape=(BATCH_SIZE, latent_dim))
+    time_steps_example = tf.random.uniform(shape=(512,))
 
-    latent_image_example = tf.random.uniform(shape=(BATCH_SIZE, time_embedding_dim))
-
-    _ = model2(latent_image_example)
+    _, _, _ = model2(text_inputs_example, latent_inputs_example, time_steps_example)
 
     model2.summary()
+    
+
+
     print('''
         -----------------------------
         ---Estimation Terminates----- 
