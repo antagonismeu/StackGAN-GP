@@ -101,12 +101,11 @@ class VAE(tf.keras.Model):
         self.decoder_dense = Dense(7*7*128, activation='relu')  # Adjust based on the desired output size
         self.decoder_conv = [
             Reshape((7, 7, 128)),
-            ResBlock(128, kernel_size=3),
             Conv2DTranspose(128, kernel_size=4, strides=2, padding='same', activation='relu'),
-            ResBlock(64, kernel_size=3),
+            ResBlock(128, kernel_size=3),
             Conv2DTranspose(64, kernel_size=4, strides=2, padding='same', activation='relu'),
             ResBlock(64, kernel_size=3),
-            Transpose(32, kernel_size=3, strides=2, padding='same', activation='relu'),
+            Conv2DTranspose(32, kernel_size=3, strides=2, padding='same', activation='relu'),
             ResBlock(32, kernel_size=3),
             Conv2DTranspose(3, kernel_size=4, strides=1, padding='same', activation='sigmoid')  
         ]
