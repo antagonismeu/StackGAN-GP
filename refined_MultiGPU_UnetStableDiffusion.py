@@ -74,6 +74,8 @@ class VAE(tf.keras.Model):
         
     
         self.encoder = [
+            Dense(1024, activation='relu'),
+            Dense(512, activation='relu'),
             Dense(256, activation='relu'),
             Dense(128, activation='relu'),
             Dense(64, activation='relu'),
@@ -86,6 +88,8 @@ class VAE(tf.keras.Model):
             Dense(64, activation='relu'),
             Dense(128, activation='relu'),
             Dense(256, activation='relu'),
+            Dense(512, activation='relu'),
+            Dense(1024, activation='relu'),
             Dense(self.width*self.height*self.channel),
             Reshape(target_shape=(self.width, self.height, self.channel))
           ]
@@ -117,15 +121,20 @@ class VAE(tf.keras.Model):
             axis=raxis)
         
 
-    def compute_loss(self, x):    
-        mean, logvar = self.encode(x)
-        z = self.reparameterize(mean, logvar)
-        x_logit = self.decode(z)
-        cross_ent = tf.nn.sigmoid_cross_entropy_with_logits(logits=x_logit, labels=x)
-        logpx_z = -tf.reduce_sum(cross_ent, axis=[1, 2, 3])
-        logpz = self.log_normal_pdf(z, 0., 0.)
-        logqz_x = self.log_normal_pdf(z, mean, logvar)
-        return -tf.reduce_mean(logpx_z + logpz - logqz_x)
+    def compute_loss(self, inputs): 
+        x = inputs
+        mean, log_var = self.encode(x)
+        z = self.reparameterize(mean, log_var)
+        reconstructed = self.decode(z)   
+        reconstruction_loss = tf.reduce_mean(tf.square(inputs - reconstructed))
+        
+        
+        kl_loss = -0.5 * tf.reduce_sum(1 + log_var - tf.square(mean) - tf.exp(log_var), axis=-1)
+        kl_loss = tf.reduce_mean(kl_loss)
+        
+        
+        total_loss = reconstruction_loss + kl_loss
+        return total_loss
 
 
        
@@ -460,7 +469,7 @@ def vae_validation(description_file, model, image_directory, save_path, signatur
     try :
         df = pd.read_csv(description_file)
 
-        test_image_path = f"{image_directory}/{df['image_id'][100]}"
+        test_image_path = f"{image_directory}/{df['image_id'][201]}"
         def preprocess_image(image_path):
             img = tf.io.read_file(image_path)
             img = tf.image.decode_png(img, channels=3)  
@@ -527,6 +536,7 @@ def main_stage1(latent_dim) :
     images_path = './images'
     save_path = './VAE_results'
     save_interval = 50
+    temporary_interval = 25
 
 
     with strategy.scope() :
@@ -576,7 +586,8 @@ def main_stage1(latent_dim) :
             num += 1
             total_losses += per_loss
             print(f'per_batch_loss:{per_loss} epoch:{epoch + 1} batch_index:{num_+1}')
-        insurance(vae, vocab_size, len(magnitude))
+        if (epoch + 1) % temporary_interval == 0 :
+            insurance(vae, vocab_size, len(magnitude))
         train_loss = total_losses / num
 
 
