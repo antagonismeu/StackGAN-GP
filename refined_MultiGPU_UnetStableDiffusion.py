@@ -139,7 +139,7 @@ class VAE(tf.keras.Model):
         
     def reparameterize(self, mean, logvar):
         eps = tf.random.normal(shape=mean.shape)
-        return eps * tf.exp(logvar * .5) + mean
+        return eps * tf.exp(logvar) + mean
     
         
 
@@ -564,7 +564,7 @@ def main_stage1(latent_dim) :
     with strategy.scope() :
         dataset, vocab_size, magnitude = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
         vae = VAE(latent_dim, width, height, channel)
-        optimizer = Adam(learning_rate=3.7e-5)
+        optimizer = Adam(learning_rate=1e-3)
         vae.compile(optimizer=optimizer)
 
     print(f'Number of available GPUs: {strategy.num_replicas_in_sync}')
