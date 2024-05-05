@@ -513,6 +513,7 @@ def vae_validation(description_file, model, image_directory, save_path, signatur
             img_array = tf.image.convert_image_dtype(img, tf.float32) / 127.5 - 1.0
             return tf.expand_dims(img_array, axis=0)
         def postprocedure(img, path, signature) :
+            img = ((img + 1.0) * 127.5).numpy().astype(np.uint8)
             img = np.clip(img, 0, 255).astype(np.uint8)
             Image.fromarray(img).save(f'{path}/{signature}.png')
         image = preprocess_image(test_image_path)
@@ -535,6 +536,7 @@ def generate_image_from_text(sentence, model1, model2, width, height, time_steps
             initial_image = tf.random.normal(shape=[1, width, height, 3])  
             initial_image = tf.clip_by_value(initial_image, -1, 1)
         def postprocedure(img, path, signature) :
+            img = ((img + 1.0) * 127.5).numpy().astype(np.uint8)
             img = np.clip(img, 0, 255).astype(np.uint8)
             Image.fromarray(img).save(f'{path}/{signature}.png')
         time_steps_ = tf.range(0, time_steps, dtype=tf.float32)
@@ -597,7 +599,6 @@ def main_stage1(latent_dim) :
             print(image_inputs.shape)
             scaled_loss = vae.compute_loss(image_inputs)
         gradients = tape.gradient(scaled_loss, vae.trainable_variables)
-        gradients, _ = tf.clip_by_global_norm(gradients, clip_norm=1.0)
         optimizer.apply_gradients(zip(gradients, vae.trainable_variables))
 
         return scaled_loss  
