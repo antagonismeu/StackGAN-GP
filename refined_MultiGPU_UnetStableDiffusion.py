@@ -65,20 +65,6 @@ class TextEncoder(tf.keras.Model):
 
 
 
-class ResBlock(tf.keras.Model):
-    def __init__(self, filters, kernel_size):
-        super(ResBlock, self).__init__()
-        self.conv1 = Conv2D(filters, kernel_size, padding='same')
-        self.conv2 = Conv2D(filters, kernel_size, padding='same')
-        self.activation = ReLU()
-        
-    def call(self, inputs):
-        x = self.conv1(inputs)
-        x = self.activation(x)
-        x = self.conv2(x)
-        return inputs + x
-
-
 
 
 class VAE(tf.keras.Model):
@@ -93,26 +79,54 @@ class VAE(tf.keras.Model):
         
     
         self.encoder = [
-            Conv2D(32, kernel_size=4, strides=2, padding='same', activation='relu'),
-            ResBlock(32, kernel_size=3),
-            Conv2D(64, kernel_size=4, strides=2, padding='same', activation='relu'),
-            ResBlock(64, kernel_size=3),
-            Conv2D(128, kernel_size=4, strides=2, padding='same', activation='relu'),
-            ResBlock(128, kernel_size=3),
+            Conv2D(32, kernel_size=4, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2),
+            Conv2D(64, kernel_size=4, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2),
+            Conv2D(64, kernel_size=4, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2),
+            Conv2D(64, kernel_size=4, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2),
+            Conv2D(64, kernel_size=4, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2),
             Flatten(),
             Dense(latent_dim + latent_dim)  
         ]
         
         
-        self.decoder_dense = Dense(32*32*13, activation='relu')  # Adjust based on the desired output size
+        self.decoder_dense = Dense(8*8*64, activation='relu')  
         self.decoder = [
-            Reshape((32, 32, 13)),
-            Conv2DTranspose(128, kernel_size=4, strides=2, padding='same', activation='relu'),
-            ResBlock(128, kernel_size=3),
-            Conv2DTranspose(64, kernel_size=4, strides=2, padding='same', activation='relu'),
-            ResBlock(64, kernel_size=3),
-            Conv2DTranspose(32, kernel_size=3, strides=2, padding='same', activation='relu'),
-            ResBlock(32, kernel_size=3),
+            Reshape((8, 8, 64)),
+            Conv2DTranspose(64, kernel_size=4, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2),            
+            Conv2DTranspose(64, kernel_size=4, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2),
+            Conv2DTranspose(64, kernel_size=4, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2), 
+            Conv2DTranspose(64, kernel_size=4, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2),                          
+            Conv2DTranspose(32, kernel_size=3, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2),  
             Conv2DTranspose(3, kernel_size=4, strides=1, padding='same', activation='sigmoid')  
         ]
 
@@ -139,7 +153,7 @@ class VAE(tf.keras.Model):
         
     def reparameterize(self, mean, logvar):
         eps = tf.random.normal(shape=mean.shape)
-        return eps * tf.exp(logvar) + mean
+        return eps * tf.exp(logvar * .5) + mean
     
         
 
