@@ -64,6 +64,25 @@ class TextEncoder(tf.keras.Model):
         return text_embeddings
 
 
+class ResidualBlock(layers.Layer):
+    def __init__(self, filters, kernel_size):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = Conv2D(filters, kernel_size, padding='same')
+        self.conv2 = Conv2D(filters, kernel_size, padding='same')
+        self.batch_norm = BatchNormalization()
+        self.leaky_relu1 = LeakyReLU(alpha=0.2)
+        self.leaky_relu2 = LeakyReLU(alpha=0.2)
+        self.add = Add()
+
+    def call(self, inputs):
+        x = self.conv1(inputs)
+        x = self.batch_norm(x)
+        x = self.leaky_relu1(x)
+        x = self.conv2(x)
+        x = self.batch_norm(x)
+        x = self.leaky_relu2(x)
+        x = self.add([inputs, x])
+        return x
 
 
 
@@ -83,50 +102,60 @@ class VAE(tf.keras.Model):
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
             Dropout(rate=0.2),
+            ResidualBlock(32, 4),
             Conv2D(64, kernel_size=4, strides=2, padding='same'),
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
             Dropout(rate=0.2),
+            ResidualBlock(64, 4),
             Conv2D(64, kernel_size=4, strides=2, padding='same'),
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
             Dropout(rate=0.2),
+            ResidualBlock(64, 4),
             Conv2D(64, kernel_size=4, strides=2, padding='same'),
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
             Dropout(rate=0.2),
-            Conv2D(64, kernel_size=4, strides=2, padding='same'),
+            ResidualBlock(64, 4),
+            Conv2D(128, kernel_size=4, strides=2, padding='same'),
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
             Dropout(rate=0.2),
+            ResidualBlock(128, 4),
             Flatten(),
             Dense(latent_dim + latent_dim)  
         ]
         
         
-        self.decoder_dense = Dense(8*8*64, activation='relu')  
+        self.decoder_dense = Dense(8*8*128, activation='relu')  
         self.decoder = [
-            Reshape((8, 8, 64)),
-            Conv2DTranspose(64, kernel_size=4, strides=2, padding='same'),
+            Reshape((8, 8, 128)),
+            Conv2DTranspose(128, kernel_size=4, strides=2, padding='same'),
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
-            Dropout(rate=0.2),            
+            Dropout(rate=0.2), 
+            ResidualBlock(128, 4),           
             Conv2DTranspose(64, kernel_size=4, strides=2, padding='same'),
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
             Dropout(rate=0.2),
+            ResidualBlock(64, 4),
             Conv2DTranspose(64, kernel_size=4, strides=2, padding='same'),
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
             Dropout(rate=0.2), 
+            ResidualBlock(64, 4),
             Conv2DTranspose(64, kernel_size=4, strides=2, padding='same'),
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
-            Dropout(rate=0.2),                          
-            Conv2DTranspose(32, kernel_size=3, strides=2, padding='same'),
+            Dropout(rate=0.2), 
+            ResidualBlock(64, 4),                         
+            Conv2DTranspose(32, kernel_size=4, strides=2, padding='same'),
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
-            Dropout(rate=0.2),  
+            Dropout(rate=0.2),
+            ResidualBlock(32, 4),  
             Conv2DTranspose(3, kernel_size=4, strides=1, padding='same', activation='sigmoid')  
         ]
 
