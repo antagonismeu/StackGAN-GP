@@ -3,4 +3,7 @@ reconstruction.py
 UnetStableDiffusion.py
 MultiGPU-UnetStableDiffusion.py
 huggingface.py
+VAE_eva.py
+temporary_checkpoints
+models
 rename.py
