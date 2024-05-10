@@ -87,9 +87,10 @@ class ResidualBlock(layers.Layer):
 
 
 class VAE(tf.keras.Model):
-    def __init__(self, latent_dim, width, height, channel):
+    def __init__(self, latent_dim, batch_size, width, height, channel):
         super(VAE, self).__init__()
         self.latent_dim = latent_dim
+        self.batch_size = batch_size
         self.width = width
         self.height = height
         self.channel = channel
@@ -98,6 +99,11 @@ class VAE(tf.keras.Model):
         
     
         self.encoder = [
+            Conv2D(16, kernel_size=4, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2),
+            ResidualBlock(16, 4),
             Conv2D(32, kernel_size=4, strides=2, padding='same'),
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
@@ -108,63 +114,38 @@ class VAE(tf.keras.Model):
             LeakyReLU(alpha=0.2),
             Dropout(rate=0.2),
             ResidualBlock(64, 4),
-            Conv2D(64, kernel_size=4, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),
-            Dropout(rate=0.2),
-            ResidualBlock(64, 4),
-            Conv2D(64, kernel_size=4, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),
-            Dropout(rate=0.2),
-            ResidualBlock(64, 4),
-            Conv2D(128, kernel_size=4, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),
-            Dropout(rate=0.2),
-            ResidualBlock(128, 4),
             Flatten(),
             Dense(latent_dim + latent_dim)  
         ]
         
         
-        self.decoder_dense = Dense(8*8*128, activation='relu')  
+        self.decoder_dense = Dense(8*8*64, activation='relu')  
         self.decoder = [
-            Reshape((8, 8, 128)),
-            Conv2DTranspose(128, kernel_size=4, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),
-            Dropout(rate=0.2), 
-            ResidualBlock(128, 4),           
-            Conv2DTranspose(64, kernel_size=4, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),
-            Dropout(rate=0.2),
-            ResidualBlock(64, 4),
+            Reshape((8, 8, 64)),
             Conv2DTranspose(64, kernel_size=4, strides=2, padding='same'),
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
             Dropout(rate=0.2), 
             ResidualBlock(64, 4),
-            Conv2DTranspose(64, kernel_size=4, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),
-            Dropout(rate=0.2), 
-            ResidualBlock(64, 4),                         
             Conv2DTranspose(32, kernel_size=4, strides=2, padding='same'),
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2), 
+            ResidualBlock(32, 4),                         
+            Conv2DTranspose(16, kernel_size=4, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
             Dropout(rate=0.2),
-            ResidualBlock(32, 4),  
-            Conv2DTranspose(3, kernel_size=4, strides=1, padding='same', activation='sigmoid')  
+            ResidualBlock(16, 4),  
+            Conv2DTranspose(3, kernel_size=7, strides=1, padding='same', activation='sigmoid')  
         ]
 
         
     def encode(self, x):
         for layer in self.encoder :
             x = layer(x)
-        mean, logvar = tf.split(x, num_or_size_splits=2, axis=1)
-        return mean, logvar
+        mean, stddev = tf.split(x, num_or_size_splits=2, axis=1)
+        return mean, stddev
     
 
     def decode(self, z):
@@ -174,27 +155,29 @@ class VAE(tf.keras.Model):
         return z
 
     def call(self, x) :
-        mean, logvar = self.encode(x)
-        intermediate = self.reparameterize(mean, logvar)
+        mean, stddev = self.encode(x)
+        intermediate = self.reparameterize(mean, stddev)
         z = self.decode(intermediate)
         return z
 
         
-    def reparameterize(self, mean, logvar):
+    def reparameterize(self, mean, stddev):
         eps = tf.random.normal(shape=mean.shape)
-        return eps * tf.exp(logvar * .5) + mean
+        return eps * stddev + mean
     
         
 
     def compute_loss(self, inputs): 
         x = inputs
-        mean, log_var = self.encode(x)
-        z = self.reparameterize(mean, log_var)
-        reconstructed = self.decode(z)   
-        reconstruction_loss = tf.reduce_mean(tf.square(inputs - reconstructed))
+        mean, stddev = self.encode(x)
+        z = self.reparameterize(mean, stddev)
+        reconstructed = self.decode(z)
+        inputs_ = tf.reshape(inputs, [self.batch_size, self.width*self.height*self.channel])
+        reconstructed_ = tf.reshape(reconstructed, [self.batch_size, self.width*self.height*self.channel])    
+        reconstruction_loss = tf.reduce_mean(tf.reduce_sum(tf.square(inputs_ - reconstructed_)), axis=-1)
         
         
-        kl_loss = -0.5 * tf.reduce_sum(1 + log_var - tf.square(mean) - tf.exp(log_var), axis=-1)
+        kl_loss = -0.5 * tf.reduce_sum(1 + 2*tf.log(stddev) - tf.square(mean) - tf.square(stddev), axis=-1)
         kl_loss = tf.reduce_mean(kl_loss)
         
         
@@ -608,7 +591,7 @@ def main_stage1(latent_dim) :
 
     with strategy.scope() :
         dataset, vocab_size, magnitude = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
-        vae = VAE(latent_dim, width, height, channel)
+        vae = VAE(latent_dim, BATCH_SIZE, width, height, channel)
         optimizer = Adam(learning_rate=1e-3)
         vae.compile(optimizer=optimizer)
 
