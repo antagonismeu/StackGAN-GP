@@ -109,6 +109,16 @@ class VAE(tf.keras.Model):
             LeakyReLU(alpha=0.2),
             Dropout(rate=0.2),
             ResidualBlock(32, 4),
+            Conv2D(32, kernel_size=4, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2),
+            ResidualBlock(32, 4),
+            Conv2D(64, kernel_size=4, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2),
+            ResidualBlock(64, 4),
             Conv2D(64, kernel_size=4, strides=2, padding='same'),
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
@@ -127,11 +137,21 @@ class VAE(tf.keras.Model):
             LeakyReLU(alpha=0.2),
             Dropout(rate=0.2), 
             ResidualBlock(64, 4),
+            Conv2DTranspose(64, kernel_size=4, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2), 
+            ResidualBlock(64, 4),            
             Conv2DTranspose(32, kernel_size=4, strides=2, padding='same'),
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
             Dropout(rate=0.2), 
-            ResidualBlock(32, 4),                         
+            ResidualBlock(32, 4), 
+            Conv2DTranspose(32, kernel_size=4, strides=2, padding='same'),
+            BatchNormalization(),
+            LeakyReLU(alpha=0.2),
+            Dropout(rate=0.2), 
+            ResidualBlock(32, 4),                                     
             Conv2DTranspose(16, kernel_size=4, strides=2, padding='same'),
             BatchNormalization(),
             LeakyReLU(alpha=0.2),
@@ -174,10 +194,10 @@ class VAE(tf.keras.Model):
         reconstructed = self.decode(z)
         inputs_ = tf.reshape(inputs, [self.batch_size, self.width*self.height*self.channel])
         reconstructed_ = tf.reshape(reconstructed, [self.batch_size, self.width*self.height*self.channel])    
-        reconstruction_loss = tf.reduce_mean(tf.reduce_sum(tf.square(inputs_ - reconstructed_)), axis=-1)
+        reconstruction_loss = tf.reduce_mean(tf.reduce_sum(abs(inputs_ - reconstructed_),1), axis=-1)
         
         
-        kl_loss = -0.5 * tf.reduce_sum(1 + 2*tf.log(stddev) - tf.square(mean) - tf.square(stddev), axis=-1)
+        kl_loss = -0.5 * tf.reduce_sum(1 + 2*tf.math.log(stddev) - tf.square(mean) - tf.square(stddev), axis=-1)
         kl_loss = tf.reduce_mean(kl_loss)
         
         
