@@ -96,18 +96,22 @@ class VAE(tf.keras.Model):
         self.channel = channel
         self.encoder = [
             Conv2D(32, 3, activation='relu', strides=2, padding='same'),
+            ResidualBlock(32, 3),
             Conv2D(64, 3, activation='relu', strides=2, padding='same'),
             Conv2D(128, 3, activation='relu', strides=2, padding='same'),
             Conv2D(256, 3, activation='relu', strides=2, padding='same'),
+            ResidualBlock(256, 3),
             Flatten(),
             Dense(self.latent_dim)
         ]
         self.decoder = [
             Dense(32 * 32 * 256, activation='relu'),
             Reshape((32, 32, 256)),
+            ResidualBlock(256, 3),
             Conv2DTranspose(128, 3, activation='relu', strides=2, padding='same'),
             Conv2DTranspose(64, 3, activation='relu', strides=2, padding='same'),
             Conv2DTranspose(32, 3, activation='relu', strides=2, padding='same'),
+            ResidualBlock(32, 3),
             Conv2DTranspose(3, 3, activation='sigmoid', padding='same')
         ]
         self.optimizer = optimizer
