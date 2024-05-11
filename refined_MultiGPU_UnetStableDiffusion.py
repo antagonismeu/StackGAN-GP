@@ -552,12 +552,12 @@ def main_stage1(latent_dim) :
     configuration()
     coversion_log_path = './log/VAE.log'
     strategy = tf.distribute.MirroredStrategy()
-    epochs_stage = 5500
+    epochs_stage = 20000
     csv_path = 'descriptions.csv'
     images_path = './images'
     save_path = './VAE_results'
-    save_interval = 50
-    temporary_interval = 25
+    save_interval = 150
+    temporary_interval = 100
 
 
     with strategy.scope() :
@@ -641,7 +641,7 @@ def main_stage2(datum, vae, vocab_size, gross_magnitude, latent_dim):
         -----------------------------
 
     ''')
-    epochs2 = 10000
+    epochs2 = 20000
     alpha = 0.828
     save_path = './samples'
     time_embedding_dim = 512
