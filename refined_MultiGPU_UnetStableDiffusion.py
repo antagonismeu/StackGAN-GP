@@ -87,7 +87,7 @@ class ResidualBlock(layers.Layer):
 
 
 class VAE(tf.keras.Model):
-    def __init__(self, loss, latent_dim, batch_size, width, height, channel):
+    def __init__(self, loss, optimizer, latent_dim, batch_size, width, height, channel):
         super(VAE, self).__init__()
         self.width = width
         self.latent_dim = latent_dim
@@ -110,7 +110,7 @@ class VAE(tf.keras.Model):
             Conv2DTranspose(32, 3, activation='relu', strides=2, padding='same'),
             Conv2DTranspose(3, 3, activation='sigmoid', padding='same')
         ]
-        self.optimizer = tf.keras.optimizers.Adam()
+        self.optimizer = optimizer
         self.mse_loss = loss
 
 
@@ -121,7 +121,7 @@ class VAE(tf.keras.Model):
         z_mean = x
         z_log_var = x
         z = self.reparameterize(z_mean, z_log_var)
-        return z
+        return z, z_mean, z_log_var
     
 
 
@@ -134,7 +134,7 @@ class VAE(tf.keras.Model):
 
 
     def call(self, inputs):
-        x = self.encode(inputs)
+        x, _, _ = self.encode(inputs)
         x = self.decode(x)
         return x
 
@@ -147,10 +147,12 @@ class VAE(tf.keras.Model):
     
     def compute_loss(self, inputs):
         with tf.GradientTape() as tape:
-            reconstructed = self(inputs)
-            loss = self.mse_loss(inputs, reconstructed)
-            kl_loss = -0.5 * tf.reduce_mean(1 + self.encoder[-1](inputs) - tf.square(self.encoder[-2](inputs)) - tf.exp(self.encoder[-1](inputs)))
+            z, z_mean, z_log_var = self.encode(inputs)
+            reconstructed = self.decode(z)
+            loss = self.mse_loss(inputs[..., None], reconstructed[..., None])
+            kl_loss = -0.5 * tf.reduce_mean(1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
             loss += kl_loss
+            loss /= tf.cast(tf.reduce_prod(tf.shape(inputs)[:]), tf.float32)
         gradients = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
         return loss
@@ -557,8 +559,8 @@ def main_stage1(latent_dim) :
     with strategy.scope() :
         dataset, vocab_size, magnitude = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
         loss_fn = MeanSquaredError(reduction=tf.keras.losses.Reduction.NONE)
-        vae = VAE(loss_fn, latent_dim, BATCH_SIZE, width, height, channel)
         optimizer = Adam(learning_rate=1e-3)
+        vae = VAE(loss_fn, optimizer, latent_dim, BATCH_SIZE, width, height, channel)
         vae.compile(optimizer=optimizer, loss=loss_fn)
 
     print(f'Number of available GPUs: {strategy.num_replicas_in_sync}')
