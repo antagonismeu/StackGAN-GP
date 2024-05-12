@@ -428,14 +428,14 @@ class Text2ImageDiffusionModel(tf.keras.Model):
     def call(self, text_inputs, image_inputs, time_steps):
         text_embeddings = self.text_encoder(text_inputs)
         time_steps_vector = self.time_embedding(time_steps)
-        latent_images = self.vae.encode(image_inputs)
+        latent_images = self.vae.encode(image_inputs)[0]
         generated_images_list = []
         gaussian_list = []
         generated_images_list.append(latent_images)
         for index in range(len(time_steps_vector) - 1) :
             gaussian_vector = tf.random.normal(shape=(self.batch_size, self.width, self.height, self.channel), mean=0.0, stddev=1.0)
-            latent_gaussian_vector = self.vae.encode(gaussian_vector)
-            latent_images = np.sqrt(self.alpha**float(index)) * latent_images + np.sqrt(1 - self.alpha**float(index)) * latent_gaussian_vector
+            latent_gaussian_vector = self.vae.encode(gaussian_vector)[0]
+            latent_images = np.sqrt(self.alpha**index) * latent_images + np.sqrt(1 - self.alpha**index) * latent_gaussian_vector
             generated_images_list.append(latent_images)
             gaussian_list.append(latent_gaussian_vector)
         images_tensor = tf.stack(generated_images_list, axis=0)
@@ -443,11 +443,11 @@ class Text2ImageDiffusionModel(tf.keras.Model):
         generated_list = []
         generated_images = self.diffusion_module(images_tensor[-1], self.per_time_embedding(time_steps_vector[-1]), self.flatten(text_embeddings))
         generated_list.append(generated_images)
-        varied_tensor = 1/np.sqrt(self.alpha)*(images_tensor[-1] - (1 - self.alpha)/np.sqrt(1 - self.alpha**float(len(images_tensor))) * generated_images) + np.sqrt(1 - self.alpha) * latent_gaussian_tensor[len(images_tensor) - 2]
+        varied_tensor = 1/np.sqrt(self.alpha)*(images_tensor[-1] - (1 - self.alpha)/np.sqrt(1 - self.alpha**len(images_tensor)) * generated_images) + np.sqrt(1 - self.alpha) * latent_gaussian_tensor[len(images_tensor) - 2]
         for index in reversed(range(1, len(images_tensor) - 1)) :
             generated_images = self.diffusion_module(varied_tensor, self.per_time_embedding(time_steps_vector[index]), self.flatten(text_embeddings))
             generated_list.append(generated_images)
-            varied_tensor = 1/np.sqrt(self.alpha)*(varied_tensor - (1 - self.alpha)/np.sqrt(1 - self.alpha**float(index)) * generated_images) + np.sqrt(1 - self.alpha) * latent_gaussian_tensor[index - 1]
+            varied_tensor = 1/np.sqrt(self.alpha)*(varied_tensor - (1 - self.alpha)/np.sqrt(1 - self.alpha**index) * generated_images) + np.sqrt(1 - self.alpha) * latent_gaussian_tensor[index - 1]
         generated_tensor = tf.stack(generated_list, axis=0)
         return varied_tensor, generated_tensor, latent_gaussian_tensor
     
@@ -555,14 +555,14 @@ def generate_image_from_text(sentence, model1, model2, width, height, time_steps
         time_steps_ = tf.range(0, time_steps, dtype=tf.float32)
         text_embeddings = model1.text_encoder(inputs)
         time_steps_vector = model1.time_embedding(time_steps_)
-        latent_images = model2.encode(initial_image)                    
+        latent_images = model2.encode(initial_image)[0]                    
         generated_gaussian = model1.diffusion_module(latent_images, time_steps_vector[-1], text_embeddings)
-        varied_tensor = 1/np.sqrt(model1.alpha)*(latent_images - (1 - model1.alpha)/np.sqrt(1 - model1.alpha**float(len(time_steps_))) * generated_gaussian) + np.sqrt(1 - model1.alpha) * generated_gaussian
+        varied_tensor = 1/np.sqrt(model1.alpha)*(latent_images - (1 - model1.alpha)/np.sqrt(1 - model1.alpha**len(time_steps_)) * generated_gaussian) + np.sqrt(1 - model1.alpha) * generated_gaussian
         for index in reversed(range(1, len(time_steps_) - 1)) :
             generated_gaussian= model1.diffusion_module(varied_tensor, time_steps_vector[index], text_embeddings)
-            varied_tensor = 1/np.sqrt(model1.alpha)*(varied_tensor - (1 - model1.alpha)/np.sqrt(1 - model1.alpha**float(index)) * generated_gaussian) + np.sqrt(1 - model1.alpha) * generated_gaussian
+            varied_tensor = 1/np.sqrt(model1.alpha)*(varied_tensor - (1 - model1.alpha)/np.sqrt(1 - model1.alpha**index) * generated_gaussian) + np.sqrt(1 - model1.alpha) * generated_gaussian
         generated_images = model2.decode(varied_tensor)
-        final_image = generated_images[-1]
+        final_image = generated_images[0]
         postprocedure(final_image, path, signature)
     except Exception as e:
         print(f"Error encountered during generating image from the given text: {e}")
