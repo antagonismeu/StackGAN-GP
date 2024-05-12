@@ -86,10 +86,10 @@ Here is the brief summary of the number of parameters in both the DiffusionModel
 | embedding_2 (Embedding)    | multiple      | 64          |
 | flatten_1 (Flatten)        | multiple      | 0           |
 | vae (VAE)                   | multiple      | 78155011    |
-| u_net_diffusion_module (UNetDiffusionModule) | multiple | 917700416   |
-| **Total params**           |              | **997545731** |
-| Trainable params           |              | 997529987   |
+| u_net_diffusion_module (UNetDiffusionModule) | multiple | 950255424   |
+| **Total params**           |              | **1030098627** |
+| Trainable params           |              | 1030082883   |
 | Non-trainable params       |              | 15744        |
 
 
-**Notable**: The total size of the utilized model is **997,545,731 (approximate 1B parameters) (3.72 GB)**, dependent on the StableDiffusionModel(***SD***) and Variational Auto-Encoder(***VAE***).
+**Notable**: The total size of the utilized model is **1,030,098,627 (approximate 1.03B parameters) (3.84 GB)**, dependent on the StableDiffusionModel(***SD***) and Variational Auto-Encoder(***VAE***).
