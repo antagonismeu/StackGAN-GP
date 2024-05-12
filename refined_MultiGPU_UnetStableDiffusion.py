@@ -592,7 +592,7 @@ def main_stage1(latent_dim) :
     with strategy.scope() :
         dataset, vocab_size, magnitude = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
         loss_fn = MeanSquaredError(reduction=tf.keras.losses.Reduction.NONE)
-        optimizer = Adam(learning_rate=1e-3)
+        optimizer = Adam(learning_rate=0.0002, beta_1=0.5)
         vae = VAE(loss_fn, optimizer, latent_dim, BATCH_SIZE, width, height, channel)
         vae.compile(optimizer=optimizer, loss=loss_fn)
 
@@ -699,7 +699,7 @@ def main_stage2(datum, vae, vocab_size, gross_magnitude, latent_dim):
         tensorized_data = tf.data.Dataset.zip((targets_dataset, outputs_dataset)).shuffle(buffer_size=max(len(datum), 512), reshuffle_each_iteration=True).batch(GLOBAL_BATCH_SIZE)
 
         text2image_model = Text2ImageDiffusionModel(vae, vocab_size, BATCH_SIZE, width, height, channel, alpha, latent_dim)
-        optimizer = Adam(learning_rate=0.001)
+        optimizer = Adam(learning_rate=0.0002, beta_1=0.5)
         loss_fn = MeanSquaredError(reduction=tf.keras.losses.Reduction.NONE)
 
         text2image_model.compile(optimizer=optimizer, loss=loss_fn)
