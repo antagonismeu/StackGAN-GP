@@ -7,4 +7,6 @@ huggingface.py
 VAE_eva.py
 temporary_checkpoints
 models
+VAE_results
+__pycache__
 rename.py

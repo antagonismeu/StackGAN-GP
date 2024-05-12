@@ -9,7 +9,7 @@ try:
     from tensorflow.keras.optimizers.legacy import Adam
     from tensorflow.keras.losses import MeanSquaredError
     import pandas as pd
-    import pickle, argparse
+    import pickle, argparse, glob
     from PIL import Image
     import numpy as np
 except Exception as e:
@@ -443,11 +443,14 @@ class Text2ImageDiffusionModel(tf.keras.Model):
 
 
 
-def load_dataset(description_file, image_directory, batch_size, height, width):
+def load_dataset(description_file, image_directory, batch_size, height, width, vae_mode=False):
     df = pd.read_csv(description_file)
-
-    image_paths = [f"{image_directory}/{image_id}" for image_id in df['image_id']]
-    descriptions = [desc.replace('"', '') for desc in df['description']]
+    if vae_mode :
+        portfolio = image_directory
+        image_paths = glob.glob(portfolio + "*.jpg")
+    if not vae_mode :
+        image_paths = [f"{image_directory}/{image_id}" for image_id in df['image_id']]
+        descriptions = [desc.replace('"', '') for desc in df['description']]
 
     def preprocess_image(image_path):
         img = tf.io.read_file(image_path)
@@ -470,11 +473,16 @@ def load_dataset(description_file, image_directory, batch_size, height, width):
         return text_dataset, voc_li
         
     image_dataset = tf.data.Dataset.from_tensor_slices(image_paths).map(preprocess_image)
-    text_dataset, voc_li = preprocess_text(descriptions)
+    if not vae_mode :
+        text_dataset, voc_li = preprocess_text(descriptions)
 
-    dataset = tf.data.Dataset.zip((image_dataset, text_dataset))
-    dataset = dataset.shuffle(buffer_size=max(len(df)+1, 512), reshuffle_each_iteration=True).batch(batch_size)
+        dataset = tf.data.Dataset.zip((image_dataset, text_dataset))
+        dataset = dataset.shuffle(buffer_size=max(len(df)+1, 512), reshuffle_each_iteration=True).batch(batch_size)
+        return dataset,  len(tokenizer.word_index) + 1, voc_li
+    dataset = image_dataset.shuffle(buffer_size=max(len(df)+1, 512), reshuffle_each_iteration=True).batch(batch_size)
+    text_dataset, voc_li = preprocess_text(descriptions)
     return dataset,  len(tokenizer.word_index) + 1, voc_li
+    
 
 
 
@@ -552,7 +560,7 @@ def main_stage1(latent_dim) :
 
 
     with strategy.scope() :
-        dataset, vocab_size, magnitude = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
+        dataset, vocab_size, magnitude = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width, vae_mode=True)
         loss_fn = MeanSquaredError(reduction=tf.keras.losses.Reduction.NONE)
         optimizer = Adam(learning_rate=0.0002, beta_1=0.5)
         vae = VAE(loss_fn, optimizer, latent_dim, BATCH_SIZE, width, height, channel)
@@ -570,7 +578,7 @@ def main_stage1(latent_dim) :
     @tf.function
     def train_step_stage1(batch) :
         with tf.GradientTape() as tape :
-            image_inputs, _ = batch[0], batch[1]
+            image_inputs = batch
             print(image_inputs.shape)
             scaled_loss = vae.compute_loss(image_inputs)
         gradients = tape.gradient(scaled_loss, vae.trainable_variables)
