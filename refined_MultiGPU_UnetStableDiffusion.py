@@ -307,9 +307,11 @@ class UNetDiffusionModule(tf.keras.Model):
         self.d_model = d_model
         self.multi_head_attention = MultiHeadAttention(d_model=self.d_model, num_heads=self.num_heads)     
         self.add = Add()
+        self.project = Dense(width*height*32)
+        self.reshape = Reshape((width, height, 32))
         self.compression = Dense(1024)      #  latent_dim
         self.concatenate = Concatenate()
-        self.exaggeration = Conv2D(32, kernel_size=7, strides=1, padding='same', activation='sigmoid')
+        self.exaggeration = Conv2DTranspose(32, kernel_size=7, strides=1, padding='same', activation='sigmoid')
         self.flatten = Flatten()
 
         self.conv_block1 = ConvBlock(filters=64, kernel_size=4, strides=2)
@@ -330,13 +332,9 @@ class UNetDiffusionModule(tf.keras.Model):
         self.residual_block4 = ResidualBlock(filters=1024, kernel_size=3)
 
 
-    def call(self, noisy_images, time_embedding, text_embedding):
-        weighted_latent_vector, _ = self.multi_head_attention(noisy_images, text_embedding, text_embedding)
-        eigenvector = tf.keras.layers.Concatenate(axis=-1)([weighted_latent_vector, time_embedding])
-        dim_1 = tf.TensorShape(eigenvector.shape).as_list()[0]
-        dim_2 = tf.TensorShape(eigenvector.shape).as_list()[-1]
-        eigenvector_reshaped = tf.reshape(eigenvector, [dim_1, 1, 1, dim_2])
-        d1 = tf.tile(eigenvector_reshaped, [1, self.width, self.height, 1])
+    def call(self, noisy_images, text_embedding):
+        eigenvector, _ = self.multi_head_attention(noisy_images, text_embedding, text_embedding)
+        d1 = self.reshape(self.project(eigenvector))
 
         d1 = self.conv_block1(d1)
         d2 = self.conv_block2(d1)
@@ -383,8 +381,6 @@ class Text2ImageDiffusionModel(tf.keras.Model):
         super(Text2ImageDiffusionModel, self).__init__()
         self.text_encoder = TextEncoder(vocab_size)
         self.batch_size = num_batch
-        self.time_embedding = Embedding(input_dim=input_shape, output_dim=self.batch_size)
-        self.per_time_embedding = Embedding(input_dim=self.batch_size, output_dim=self.batch_size**2)
         self.flatten = Flatten()
         self.width = width
         self.vae = VAE
@@ -393,9 +389,8 @@ class Text2ImageDiffusionModel(tf.keras.Model):
         self.alpha = alpha
         self.diffusion_module = UNetDiffusionModule(self.batch_size, self.width//8, self.height//8, d_model)
         
-    def call(self, text_inputs, image_inputs, time_steps):
+    def call(self, text_inputs, image_inputs, time_steps_vector):
         text_embeddings = self.text_encoder(text_inputs)
-        time_steps_vector = self.time_embedding(time_steps)
         latent_images = self.vae.encode(image_inputs)[0]
         generated_images_list = []
         gaussian_list = []
@@ -409,11 +404,11 @@ class Text2ImageDiffusionModel(tf.keras.Model):
         images_tensor = tf.stack(generated_images_list, axis=0)
         latent_gaussian_tensor  = tf.stack(gaussian_list, axis=0)
         generated_list = []
-        generated_images = self.diffusion_module(images_tensor[-1], self.per_time_embedding(time_steps_vector[-1]), self.flatten(text_embeddings))
+        generated_images = self.diffusion_module(images_tensor[-1], self.flatten(text_embeddings))
         generated_list.append(generated_images)
         varied_tensor = 1/np.sqrt(self.alpha)*(images_tensor[-1] - (1 - self.alpha)/np.sqrt(1 - self.alpha**len(images_tensor)) * generated_images) + np.sqrt(1 - self.alpha) * latent_gaussian_tensor[len(images_tensor) - 2]
         for index in reversed(range(1, len(images_tensor) - 1)) :
-            generated_images = self.diffusion_module(varied_tensor, self.per_time_embedding(time_steps_vector[index]), self.flatten(text_embeddings))
+            generated_images = self.diffusion_module(varied_tensor, self.flatten(text_embeddings))
             generated_list.append(generated_images)
             varied_tensor = 1/np.sqrt(self.alpha)*(varied_tensor - (1 - self.alpha)/np.sqrt(1 - self.alpha**index) * generated_images) + np.sqrt(1 - self.alpha) * latent_gaussian_tensor[index - 1]
         generated_tensor = tf.stack(generated_list, axis=0)
@@ -520,14 +515,13 @@ def generate_image_from_text(sentence, model1, model2, width, height, time_steps
             img = ((img + 1.0) * 127.5).numpy().astype(np.uint8)
             img = np.clip(img, 0, 255).astype(np.uint8)
             Image.fromarray(img).save(f'{path}/{signature}.png')
-        time_steps_ = tf.range(0, time_steps, dtype=tf.float32)
+        time_steps_vector = tf.range(0, time_steps, dtype=tf.float32)
         text_embeddings = model1.text_encoder(inputs)
-        time_steps_vector = model1.time_embedding(time_steps_)
         latent_images = model2.encode(initial_image)[0]                    
-        generated_gaussian = model1.diffusion_module(latent_images, time_steps_vector[-1], text_embeddings)
-        varied_tensor = 1/np.sqrt(model1.alpha)*(latent_images - (1 - model1.alpha)/np.sqrt(1 - model1.alpha**len(time_steps_)) * generated_gaussian) + np.sqrt(1 - model1.alpha) * generated_gaussian
-        for index in reversed(range(1, len(time_steps_) - 1)) :
-            generated_gaussian= model1.diffusion_module(varied_tensor, time_steps_vector[index], text_embeddings)
+        generated_gaussian = model1.diffusion_module(latent_images, model1.flatten(text_embeddings))
+        varied_tensor = 1/np.sqrt(model1.alpha)*(latent_images - (1 - model1.alpha)/np.sqrt(1 - model1.alpha**len(time_steps_vector)) * generated_gaussian) + np.sqrt(1 - model1.alpha) * generated_gaussian
+        for index in reversed(range(1, len(time_steps_vector) - 1)) :
+            generated_gaussian= model1.diffusion_module(varied_tensor, model1.flatten(text_embeddings))
             varied_tensor = 1/np.sqrt(model1.alpha)*(varied_tensor - (1 - model1.alpha)/np.sqrt(1 - model1.alpha**index) * generated_gaussian) + np.sqrt(1 - model1.alpha) * generated_gaussian
         generated_images = model2.decode(varied_tensor)
         final_image = generated_images[0]
