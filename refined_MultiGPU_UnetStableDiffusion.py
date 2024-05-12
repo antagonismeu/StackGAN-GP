@@ -445,12 +445,12 @@ class Text2ImageDiffusionModel(tf.keras.Model):
 
 def load_dataset(description_file, image_directory, batch_size, height, width, vae_mode=False):
     df = pd.read_csv(description_file)
+    descriptions = [desc.replace('"', '') for desc in df['description']]
     if vae_mode :
         portfolio = image_directory
-        image_paths = glob.glob(portfolio + "*.jpg")
+        image_paths = glob.glob(os.path.join(portfolio, '*.jpg'))
     if not vae_mode :
         image_paths = [f"{image_directory}/{image_id}" for image_id in df['image_id']]
-        descriptions = [desc.replace('"', '') for desc in df['description']]
 
     def preprocess_image(image_path):
         img = tf.io.read_file(image_path)
