@@ -663,7 +663,7 @@ def main_stage1(latent_dim) :
 
 
 
-def main_stage2(datum, vae, vocab_size, gross_magnitude, latent_dim):
+def main_stage2(vae, vocab_size, gross_magnitude, latent_dim):
     print('''
         -----------------------------
         ---Stage 2 Is Initialized-----  
@@ -672,6 +672,8 @@ def main_stage2(datum, vae, vocab_size, gross_magnitude, latent_dim):
     ''')
     epochs2 = 20000
     alpha = 0.828
+    csv_path_2 = 'descriptions.csv'
+    images_path_2 = './images'
     save_path = './samples'
     time_embedding_dim = 512
 
@@ -681,23 +683,7 @@ def main_stage2(datum, vae, vocab_size, gross_magnitude, latent_dim):
 
 
     with strategy.scope():
-        individual_targets = []
-        individual_outputs = []
-
-        for batch_targets, batch_output in datum :
-            individual_targets.extend(tf.unstack(batch_targets))
-            individual_outputs.extend(tf.unstack(batch_output))
-        
-        targets_tensor = tf.stack(individual_targets)
-        outputs_tensor = tf.stack(individual_outputs)
-
-            
-        targets_dataset = tf.data.Dataset.from_tensor_slices(targets_tensor)
-        outputs_dataset = tf.data.Dataset.from_tensor_slices(outputs_tensor)
-
-            
-        tensorized_data = tf.data.Dataset.zip((targets_dataset, outputs_dataset)).shuffle(buffer_size=max(len(datum), 512), reshuffle_each_iteration=True).batch(GLOBAL_BATCH_SIZE)
-
+        tensorized_data, _, _ = load_dataset(csv_path_2, images_path_2, GLOBAL_BATCH_SIZE, height, width)
         text2image_model = Text2ImageDiffusionModel(vae, vocab_size, BATCH_SIZE, width, height, channel, alpha, latent_dim)
         optimizer = Adam(learning_rate=0.0002, beta_1=0.5)
         loss_fn = MeanSquaredError(reduction=tf.keras.losses.Reduction.NONE)
@@ -773,39 +759,14 @@ def main(mode="restart"):
     latent_dim = 1024 
 
 
-    def simulation(intermediates, raw_datum, magnitude) :
-        iterator = iter(raw_datum)
-        intermediates_list = []
-        for num_, batch in enumerate(iterator):
-            try :
-                images, line = batch[0], batch[1]
-                inputs = [tokenizer.word_index[i] for i in line.split(" ")]
-                inputs = tf.keras.preprocessing.sequence.pad_sequences([inputs], maxlen=magnitude, padding="post")
-                inputs = tf.convert_to_tensor(inputs)
-                mean, logvar = intermediates.encode(images)
-                z = intermediates.reparameterize(mean, logvar)
-                intermediates_list.append((z, inputs))
-                print(f'--------No.{num_ + 1}generation successful !--------')
-            except Exception as e:
-                print(f"Error encountered during simulate latent vector{num_ + 1}: {e}")
-                print(f'--------No.{num_ + 1}generation failed(All Atempts Had Tried !)--------')
-                continue
-        return intermediates_list
-
-
-
     def load_state():
         try:
-            images_path_2 = './images'
-            csv_path_2 = 'descriptions.csv'
-            original_datum, _, _ = load_dataset(csv_path_2, images_path_2, GLOBAL_BATCH_SIZE, height, width)
             model_ = VAE(latent_dim, width, height, channel)
             model_.load_weights('./temporary_checkpoints/InsuranceModel')
             with open("./temporary_checkpoints/last_latent_vector.pkl", "rb") as f:
                 x = pickle.load(f)
                 x1, x2 = x[0], x[1]
-            latent_datum = simulation(model_, original_datum, x2)
-            return latent_datum, model_, x1, x2                        
+            return model_, x1, x2                        
         except Exception as e:
             print(f"Error encountered during reactivating repository: {e}")
             return None
@@ -814,15 +775,10 @@ def main(mode="restart"):
 
     if mode == 'restart':
         model, vocab_size, magnitude = main_stage1(latent_dim)
-        images_path_3 = './images'
-        csv_path_3 = 'descriptions.csv'
-        original_datum, _, _ = load_dataset(csv_path_3, images_path_3, GLOBAL_BATCH_SIZE, height, width)
-        subsequent_datum = simulation(model, original_datum, magnitude)
-        main_stage2(subsequent_datum, model, vocab_size, magnitude, latent_dim)
+        main_stage2(model, vocab_size, magnitude, latent_dim)
     elif mode == 'recover':
-        subsequent_datum, model, vocab_size, magnitude = load_state()
-        main_stage2(subsequent_datum, model, vocab_size, magnitude)
-
+        model, vocab_size, magnitude = load_state()
+        main_stage2(model, vocab_size, magnitude, latent_dim)
 
 
 
