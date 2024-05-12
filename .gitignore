@@ -2,6 +2,7 @@ zip.py
 reconstruction.py
 UnetStableDiffusion.py
 MultiGPU-UnetStableDiffusion.py
+estimator.py
 huggingface.py
 VAE_eva.py
 temporary_checkpoints
