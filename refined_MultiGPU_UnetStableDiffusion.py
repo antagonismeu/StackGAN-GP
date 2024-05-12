@@ -265,6 +265,38 @@ class MultiHeadAttention(layers.Layer):
 
 
 
+class ConvBlock(layers.Layer):
+    def __init__(self, filters, kernel_size, strides, activation='relu'):
+        super(ConvBlock, self).__init__()
+        self.conv = Conv2D(filters, kernel_size, strides=strides, padding='same')
+        self.batch_norm = BatchNormalization()
+        self.activation = Activation(activation)
+
+    def call(self, inputs):
+        x = self.conv(inputs)
+        x = self.batch_norm(x)
+        x = self.activation(x)
+        return x
+
+
+
+
+class DeconvBlock(layers.Layer):
+    def __init__(self, filters, kernel_size, strides, activation='relu'):
+        super(DeconvBlock, self).__init__()
+        self.deconv = Conv2DTranspose(filters, kernel_size, strides=strides, padding='same')
+        self.batch_norm = BatchNormalization()
+        self.activation = Activation(activation)
+
+    def call(self, inputs):
+        x = self.deconv(inputs)
+        x = self.batch_norm(x)
+        x = self.activation(x)
+        return x
+
+
+
+
 class UNetDiffusionModule(tf.keras.Model):
     def __init__(self, num_batch, width, height, d_model, num_heads=8):
         super(UNetDiffusionModule, self).__init__()
@@ -275,136 +307,72 @@ class UNetDiffusionModule(tf.keras.Model):
         self.d_model = d_model
         self.multi_head_attention = MultiHeadAttention(d_model=self.d_model, num_heads=self.num_heads)     
         self.add = Add()
-        self.activation = Activation('relu')
-        self.batch_nomalization = BatchNormalization()
-        self.compression = Dense(1024)           #latent_image[-1]
+        self.compression = Dense(1024)      #  latent_dim
         self.concatenate = Concatenate()
         self.exaggeration = Conv2D(32, kernel_size=7, strides=1, padding='same', activation='sigmoid')
         self.flatten = Flatten()
 
-        self.conv_blocks1 = [
-            Conv2D(64, 4, strides=2, padding='same'),
-            BatchNormalization(),
-            self.activation
-        ]
-        self.conv_blocks2 = [
-            Conv2D(128, 4, strides=2, padding='same'),
-            BatchNormalization(),
-            self.activation
-        ]
-        self.conv_blocks3 = [
-            Conv2D(256, 4, strides=2, padding='same'),
-            BatchNormalization(),
-            self.activation
-        ]
-        self.deconv_blocks1 = [
-            Conv2DTranspose(64, 4, strides=2, padding='same'),
-            BatchNormalization(),
-            self.activation
-        ]
-        self.deconv_blocks1_ = [
-            Conv2DTranspose(64, 4, strides=2, padding='same'),
-            BatchNormalization(),
-            self.activation
-        ]
-        self.deconv_blocks2 = [
-            Conv2DTranspose(128, 4, strides=2, padding='same'),
-            BatchNormalization(),
-            self.activation
-        ]
-        self.residual_block1 = [
-            Conv2D(128, 3, strides=1, padding='same'),
-            BatchNormalization(),
-            self.activation,
-            Conv2D(128, 3, strides=1, padding='same'),
-            BatchNormalization()
-        ]
-        self.residual_block2 = [
-            Conv2D(256, 3, strides=1, padding='same'),
-            BatchNormalization(),
-            self.activation,
-            Conv2D(256, 3, strides=1, padding='same'),
-            BatchNormalization()
-        ]
+        self.conv_block1 = ConvBlock(filters=64, kernel_size=4, strides=2)
+        self.conv_block2 = ConvBlock(filters=128, kernel_size=4, strides=2)
+        self.conv_block3 = ConvBlock(filters=256, kernel_size=4, strides=2)
+        self.conv_block4 = ConvBlock(filters=512, kernel_size=4, strides=2)
+        self.conv_block5 = ConvBlock(filters=1024, kernel_size=4, strides=2)
+        
+        self.deconv_block1 = DeconvBlock(filters=32, kernel_size=4, strides=2)
+        self.deconv_block2 = DeconvBlock(filters=64, kernel_size=4, strides=2)
+        self.deconv_block3 = DeconvBlock(filters=128, kernel_size=4, strides=2)
+        self.deconv_block4 = DeconvBlock(filters=256, kernel_size=4, strides=2)
+        self.deconv_block5 = DeconvBlock(filters=512, kernel_size=4, strides=2)
 
+        self.residual_block1 = ResidualBlock(filters=128, kernel_size=3)
+        self.residual_block2 = ResidualBlock(filters=256, kernel_size=3)
+        self.residual_block3 = ResidualBlock(filters=512, kernel_size=3)
+        self.residual_block4 = ResidualBlock(filters=1024, kernel_size=3)
 
 
     def call(self, noisy_images, time_embedding, text_embedding):
-            
         weighted_latent_vector, _ = self.multi_head_attention(noisy_images, text_embedding, text_embedding)
-        eigenvector = Concatenate(axis=-1)([weighted_latent_vector, time_embedding])
+        eigenvector = tf.keras.layers.Concatenate(axis=-1)([weighted_latent_vector, time_embedding])
         dim_1 = tf.TensorShape(eigenvector.shape).as_list()[0]
         dim_2 = tf.TensorShape(eigenvector.shape).as_list()[-1]
-        dim_3 = tf.TensorShape(noisy_images.shape).as_list()[-1]
-            
         eigenvector_reshaped = tf.reshape(eigenvector, [dim_1, 1, 1, dim_2])
-            
         d1 = tf.tile(eigenvector_reshaped, [1, self.width, self.height, 1])
 
-        for layer in self.conv_blocks1 :
-            d1 = layer(d1)
-        d2 = d1
-        for layer in self.conv_blocks2 :
-            d2 = layer(d2)
-        d2_ = d2
-        for layer in self.residual_block1 :
-            d2_ = layer(d2_)
-        d2 = self.add([d2, d2_])
-        d2 = self.activation(d2)
-        d2_ = d2
-        for layer in self.residual_block1 :
-            d2_ = layer(d2_)
-        d2 = self.add([d2, d2_])
-        d2 = self.activation(d2)
-        d3 = d2
-        for layer in self.conv_blocks3 :
-            d3 = layer(d3)
-        d3_ = d3
-        for layer in self.residual_block2 :
-            d3_ = layer(d3_)
-        d3 = self.add([d3, d3_])
-        d3 = self.activation(d3)
-        d3_ = d3        
-        for layer in self.residual_block2 :
-            d3_ = layer(d3_)
-        d3 = self.add([d3, d3_])
-        d3 = self.activation(d3)
-        d4 = d3
-        for layer in self.deconv_blocks2 :
-            d4 = layer(d4)
-        d4 = self.concatenate([d4, d2])
-        d4_ = d4
-        for layer in self.residual_block2 :
-            d4_ = layer(d4_)
-        d4 = self.add([d4, d4_])
-        d4 = self.activation(d4)
-        d4_ = d4
-        for layer in self.residual_block2 :
-            d4_ = layer(d4_)
-        d4 = self.add([d4, d4_])
-        d4 = self.activation(d4)
-        d5 = d4 
-        for layer in self.deconv_blocks1 :
-            d5 = layer(d5) 
-        d5 = self.concatenate([d5, d1])
-        d5_ = d5
-        for layer in self.residual_block1 :
-            d5_ = layer(d5_)
-        d5 = self.add([d5, d5_])
-        d5 = self.activation(d5)
-        d5_ = d5
-        for layer in self.residual_block1 :
-            d5_ = layer(d5_)
-        d5 = self.add([d5, d5_])
-        d5 = self.activation(d5)
-        d6 = d5
-        for layer in self.deconv_blocks1_ :
-            d6 = layer(d6) 
-        d6 = self.exaggeration(d6)
-        d6 = self.flatten(d6)
-        outputs = self.compression(d6)                            
-        return outputs
+        d1 = self.conv_block1(d1)
+        d2 = self.conv_block2(d1)
+        d2 = self.residual_block1(d2)
+        d2 = self.residual_block1(d2)
+        d3 = self.conv_block3(d2)
+        d3 = self.residual_block2(d3)
+        d3 = self.residual_block2(d3)
+        d4 = self.conv_block4(d3)
+        d4 = self.residual_block3(d4)
+        d4 = self.residual_block3(d4)
+        d5 = self.conv_block5(d4)
+        d5 = self.residual_block4(d5)
+        d5 = self.residual_block4(d5)
 
+        d6 = self.deconv_block5(d5)
+        d6 = self.concatenate([d6, d4])
+        d6 = self.residual_block4(d6)
+        d6 = self.residual_block4(d6)
+        d7 = self.deconv_block4(d6)
+        d7 = self.concatenate([d7, d3])
+        d7 = self.residual_block3(d7)
+        d7 = self.residual_block3(d7)
+        d8 = self.deconv_block3(d7)
+        d8 = self.concatenate([d8, d2])
+        d8 = self.residual_block2(d8)
+        d8 = self.residual_block2(d8)
+        d9 = self.deconv_block2(d8)
+        d9 = self.concatenate([d9, d1])
+        d9 = self.residual_block1(d9)
+        d9 = self.residual_block1(d9)
+        d10 = self.deconv_block1(d9)
+        d10 = self.exaggeration(d10)
+        d10 = self.flatten(d10)
+        outputs = self.compression(d10)                            
+        return outputs
 
 
 
@@ -423,7 +391,7 @@ class Text2ImageDiffusionModel(tf.keras.Model):
         self.channel = channel
         self.height = height
         self.alpha = alpha
-        self.diffusion_module = UNetDiffusionModule(self.batch_size, self.width//32, self.height//32, d_model)
+        self.diffusion_module = UNetDiffusionModule(self.batch_size, self.width//8, self.height//8, d_model)
         
     def call(self, text_inputs, image_inputs, time_steps):
         text_embeddings = self.text_encoder(text_inputs)
