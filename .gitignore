@@ -7,6 +7,7 @@ huggingface.py
 VAE_eva.py
 temporary_checkpoints
 models
+noise_reinforcement.py
 VAE_results
 __pycache__
 rename.py
