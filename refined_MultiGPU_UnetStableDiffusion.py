@@ -151,8 +151,11 @@ class VAE(tf.keras.Model):
         x = inputs
         for layer in self.encoder:
             x = layer(x)
+        y = inputs
+        for layer in self.encoder:
+            y = layer(y)
         z_mean = x
-        z_log_var = x
+        z_log_var = y
         z = self.reparameterize(z_mean, z_log_var)
         return z, z_mean, z_log_var
     
@@ -178,14 +181,17 @@ class VAE(tf.keras.Model):
         return mean + tf.exp(0.5 * log_var) * epsilon
 
     
-    def compute_loss(self, inputs):
+    def compute_loss(self, inputs, l2_reg_coeff = 0.03):
         with tf.GradientTape() as tape:
             z, z_mean, z_log_var = self.encode(inputs)
             reconstructed = self.decode(z)
             loss = self.mse_loss(inputs[..., None], reconstructed[..., None])
             kl_loss = -0.5 * tf.reduce_mean(1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
             loss += kl_loss
-            loss /= tf.cast(tf.reduce_prod(tf.shape(inputs)[:]), tf.float32)
+            l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in self.trainable_variables])
+            regularization_loss = l2_reg_coeff * l2_loss
+            total_loss = loss + regularization_loss
+            total_loss /= tf.cast(tf.reduce_prod(tf.shape(inputs)[:]), tf.float32)
         gradients = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
         return loss
@@ -306,7 +312,6 @@ class UNetDiffusionModule(tf.keras.Model):
         self.num_heads = num_heads
         self.d_model = d_model
         self.multi_head_attention = MultiHeadAttention(d_model=self.d_model, num_heads=self.num_heads)     
-        self.add = Add()
         self.project = Dense(width*height*32)
         self.reshape = Reshape((width, height, 32))
         self.compression = Dense(1024)      #  latent_dim
@@ -562,7 +567,7 @@ def main_stage1(latent_dim) :
     with strategy.scope() :
         dataset, vocab_size, magnitude = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width, vae_mode=True)
         loss_fn = MeanSquaredError(reduction=tf.keras.losses.Reduction.NONE)
-        optimizer = Adam(learning_rate=0.0002, beta_1=0.5)
+        optimizer = Adam(learning_rate=0.0002, beta_1=0.5, clipvalue=1.0)
         vae = VAE(loss_fn, optimizer, latent_dim, BATCH_SIZE, width, height, channel)
         vae.compile(optimizer=optimizer, loss=loss_fn)
 
