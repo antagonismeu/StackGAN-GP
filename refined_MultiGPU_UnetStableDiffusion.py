@@ -116,7 +116,7 @@ class VAE(tf.keras.Model):
             LeakyReLU(alpha=0.2),
             ResidualBlock(512, 3),
             Flatten(),
-            Dense(self.latent_dim)
+            Dense(self.latent_dim + self.latent_dim) 
         ]
         self.decoder = [
             Dense(8 * 8 * 512, activation='relu'),
@@ -151,11 +151,7 @@ class VAE(tf.keras.Model):
         x = inputs
         for layer in self.encoder:
             x = layer(x)
-        y = inputs
-        for layer in self.encoder:
-            y = layer(y)
-        z_mean = x
-        z_log_var = y
+        z_mean, z_log_var = tf.split(x, num_or_size_splits=2, axis=1)
         z = self.reparameterize(z_mean, z_log_var)
         return z, z_mean, z_log_var
     
