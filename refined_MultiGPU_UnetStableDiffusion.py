@@ -393,14 +393,12 @@ class Text2ImageDiffusionModel(tf.keras.Model):
     def call(self, text_inputs, image_inputs, time_steps_vector):
         text_embeddings = self.text_encoder(text_inputs)
         latent_images, _, _ = self.vae.encode(image_inputs)
-        latent_images = latent_images[0]
         generated_images_list = []
         gaussian_list = []
         generated_images_list.append(latent_images)
         for index in range(len(time_steps_vector) - 1) :
             gaussian_vector = tf.random.normal(shape=(self.batch_size, self.width, self.height, self.channel), mean=0.0, stddev=1.0)
             latent_gaussian_vector, _, _ = self.vae.encode(gaussian_vector)
-            latent_gaussian_vector = latent_gaussian_vector[0]
             latent_images = np.sqrt(self.alpha**index) * latent_images + np.sqrt(1 - self.alpha**index) * latent_gaussian_vector
             generated_images_list.append(latent_images)
             gaussian_list.append(latent_gaussian_vector)
@@ -530,8 +528,7 @@ def generate_image_from_text(sentence, model1, model2, width, height, time_steps
             Image.fromarray(img).save(f'{path}/{signature}.png')
         time_steps_vector = tf.range(0, time_steps, dtype=tf.float32)
         text_embeddings = model1.text_encoder(inputs)
-        latent_images, _, _ = model2.encode(initial_image)
-        latent_images = latent_images[0]                    
+        latent_images, _, _ = model2.encode(initial_image)                   
         generated_gaussian = model1.diffusion_module(latent_images, model1.flatten(text_embeddings))
         varied_tensor = 1/np.sqrt(model1.alpha)*(latent_images - (1 - model1.alpha)/np.sqrt(1 - model1.alpha**len(time_steps_vector)) * generated_gaussian) + np.sqrt(1 - model1.alpha) * generated_gaussian
         for index in reversed(range(1, len(time_steps_vector) - 1)) :
