@@ -34,8 +34,9 @@ global WIDTH, HEIGHT, CHANNEL
 width, height = 256, 256
 assert width >= 128, height >= 128                                  #INFERIOR BOUNDARY : width, height = 128, 128  
 WIDTH , HEIGHT = width, height
-BATCH_SIZE = 4
+BATCH_SIZE = 64
 channel = 3
+assert BATCH_SIZE >= 1, channel == 3
 CHANNEL = channel
 GLOBAL_BATCH_SIZE = BATCH_SIZE * tf.distribute.MirroredStrategy().num_replicas_in_sync
 
