@@ -65,135 +65,222 @@ class TextEncoder(tf.keras.Model):
         return text_embeddings
 
 
-class ResidualBlock(layers.Layer):
+class GroupNorm(layers.Layer):
+    def __init__(self, groups=32, axis=-1, epsilon=1e-5):
+        super(GroupNorm, self).__init__()
+        self.groups = groups
+        self.axis = axis
+        self.epsilon = epsilon
+
+    def build(self, input_shape):
+        self.gamma = self.add_weight(name='gamma',
+                                     shape=(input_shape[self.axis],),
+                                     initializer='ones',
+                                     trainable=True)
+        self.beta = self.add_weight(name='beta',
+                                    shape=(input_shape[self.axis],),
+                                    initializer='zeros',
+                                    trainable=True)
+        self.groups = min(self.groups, input_shape[self.axis])
+
+    def call(self, inputs):
+        input_shape = tf.shape(inputs)
+        tensor_shape = inputs.shape.as_list()
+        group_shape = [tensor_shape[0], tensor_shape[1], tensor_shape[2], self.groups, tensor_shape[3] // self.groups]
+        inputs = tf.reshape(inputs, group_shape)
+        mean, variance = tf.nn.moments(inputs, [1, 2, 3], keepdims=True)
+        inputs = (inputs - mean) / tf.sqrt(variance + self.epsilon)
+        inputs = tf.reshape(inputs, input_shape)
+        return self.gamma * inputs + self.beta
+
+
+class Swish(layers.Layer):
+    def call(self, inputs):
+        return inputs * tf.nn.sigmoid(inputs)
+
+
+class GSC(layers.Layer):
+    def __init__(self, filters, kernel_size=3):
+        super(GSC, self).__init__()
+        self.group_norm = GroupNorm(groups=32)
+        self.swish = Swish()
+        self.conv = Conv2D(filters, kernel_size, padding='same')
+
+    def call(self, inputs):
+        x = self.group_norm(inputs)
+        x = self.swish(x)
+        x = self.conv(x)
+        return x
+
+class ResidualBlock(tf.keras.Model):
     def __init__(self, filters, kernel_size):
         super(ResidualBlock, self).__init__()
         self.conv1 = Conv2D(filters, kernel_size, padding='same')
+        self.bn1 = BatchNormalization()
+        self.relu = LeakyReLU(alpha=0.2)
         self.conv2 = Conv2D(filters, kernel_size, padding='same')
-        self.batch_norm = BatchNormalization()
-        self.leaky_relu1 = LeakyReLU(alpha=0.2)
-        self.leaky_relu2 = LeakyReLU(alpha=0.2)
-        self.add = Add()
+        self.bn2 = BatchNormalization()
 
     def call(self, inputs):
         x = self.conv1(inputs)
-        x = self.batch_norm(x)
-        x = self.leaky_relu1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
         x = self.conv2(x)
-        x = self.batch_norm(x)
-        x = self.leaky_relu2(x)
-        x = self.add([inputs, x])
+        x = self.bn2(x)
+        x += inputs
+        return x
+
+
+class VAEResidualBlock(layers.Layer):
+    def __init__(self, filters):
+        super(VAEResidualBlock, self).__init__()
+        self.gsc1 = GSC(filters)
+        self.gsc2 = GSC(filters)
+
+    def call(self, inputs):
+        x = self.gsc1(inputs)
+        x = self.gsc2(x)
+        return x + inputs
+
+
+
+
+
+class DownBlock(layers.Layer):
+    def __init__(self, filters, number=2):
+        super(DownBlock, self).__init__()
+        self.num = number
+        self.conv = Conv2D(filters, 3, strides=2, padding='same')
+        self.resblocks = [VAEResidualBlock(filters) for _ in range(self.num)]
+
+    def call(self, inputs):
+        x = self.conv(inputs)
+        for resblock in self.resblocks:
+            x = resblock(x)
+        return x
+
+class UpBlock(layers.Layer):
+    def __init__(self, filters, number=3):
+        super(UpBlock, self).__init__()
+        self.num = number
+        self.interpolate = UpSampling2D(size=(2, 2), interpolation='nearest')
+        self.conv = Conv2D(filters, 3, padding='same')
+        self.resblocks = [VAEResidualBlock(filters) for _ in range(self.num)]
+
+    def call(self, inputs):
+        x = self.interpolate(inputs)
+        x = self.conv(x)
+        for resblock in self.resblocks:
+            x = resblock(x)        
+        return x
+
+
+
+class SelfAttention(layers.Layer):
+    def __init__(self, filters):
+        super(SelfAttention, self).__init__()
+        self.query = Conv2D(filters, 1)
+        self.key = Conv2D(filters, 1)
+        self.value = Conv2D(filters, 1)
+        self.scale = Lambda(lambda x: x / tf.math.sqrt(tf.cast(filters, tf.float32)))
+
+    def call(self, inputs):
+        query = self.query(inputs)
+        key = self.key(inputs)
+        value = self.value(inputs)
+        score = tf.matmul(query, key, transpose_b=True)
+        score = self.scale(score)
+        weights = tf.nn.softmax(score)
+        attention = tf.matmul(weights, value)
+        return attention
+
+class MidBlock2D(tf.keras.Model):
+    def __init__(self, filters):
+        super(MidBlock2D, self).__init__()
+        self.resnet1 = VAEResidualBlock(filters)
+        self.attn = SelfAttention(filters)
+        self.resnet2 = VAEResidualBlock(filters)
+
+    def call(self, inputs):
+        x = self.resnet1(inputs)
+        x = self.attn(x)
+        x = self.resnet2(x)
         return x
 
 
 
 class VAE(tf.keras.Model):
-    def __init__(self, loss, optimizer, latent_dim, batch_size, width, height, channel):
+    def __init__(self, loss, optimizer, latent_dim, batch_size, width, height, channel, num_up_res_blocks=3, num_down_res_blocks=2):
         super(VAE, self).__init__()
         self.width = width
         self.latent_dim = latent_dim
         self.height = height
         self.batch_size = batch_size
         self.channel = channel
+
         self.encoder = [
-            Conv2D(32, 3, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),
-            ResidualBlock(32, 3),
-            Conv2D(64, 3, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),
-            ResidualBlock(64, 3),
-            Conv2D(128, 3, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),
-            ResidualBlock(128, 3),
-            Conv2D(256, 3, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),
-            ResidualBlock(256, 3),
-            Conv2D(512, 3, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),
-            ResidualBlock(512, 3),
+            Conv2D(32, 3, strides=1, padding='same', kernel_initializer=HeNormal()),
+            DownBlock(64, num_down_res_blocks),
+            DownBlock(128, num_down_res_blocks),
+            DownBlock(256, num_down_res_blocks),
+            *[VAEResidualBlock(256) for _ in range(num_down_res_blocks)],
+            MidBlock2D(256),
+            GSC(256),
             Flatten(),
-            Dense(self.latent_dim + self.latent_dim) 
+            Dense(self.latent_dim + self.latent_dim, kernel_initializer=HeNormal())
         ]
         self.decoder = [
-            Dense(8 * 8 * 512, activation='relu'),
-            Reshape((8, 8, 512)),
-            Conv2DTranspose(256, 3, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),            
-            ResidualBlock(256, 3),
-            Conv2DTranspose(128, 3, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),            
-            ResidualBlock(128, 3),
-            Conv2DTranspose(64, 3, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),            
-            ResidualBlock(64, 3),
-            Conv2DTranspose(32, 3, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),            
-            ResidualBlock(32, 3),
-            Conv2DTranspose(16, 3, strides=2, padding='same'),
-            BatchNormalization(),
-            LeakyReLU(alpha=0.2),            
-            ResidualBlock(16, 3),
-            Conv2DTranspose(3, 3, activation='sigmoid', padding='same')
+            Dense(32 * 32 * 256, activation='relu', kernel_initializer=HeNormal()),
+            Reshape((32, 32, 256)),
+            Conv2D(256, 3, strides=1, padding='same', kernel_initializer=HeNormal()),
+            MidBlock2D(256),
+            UpBlock(128, num_up_res_blocks),
+            UpBlock(64, num_up_res_blocks),
+            UpBlock(32, num_up_res_blocks),
+            *[VAEResidualBlock(32) for _ in range(num_up_res_blocks)],
+            GSC(32),
+            Conv2DTranspose(3, 3, activation='sigmoid', padding='same', kernel_initializer=HeNormal())
         ]
         self.optimizer = optimizer
         self.mse_loss = loss
 
-
-    def encode(self, inputs) :
+    def encode(self, inputs):
         x = inputs
         for layer in self.encoder:
             x = layer(x)
         z_mean, z_log_var = tf.split(x, num_or_size_splits=2, axis=1)
         z = self.reparameterize(z_mean, z_log_var)
         return z, z_mean, z_log_var
-    
 
-
-    def decode(self, inputs) :
+    def decode(self, inputs):
         x = inputs
-        for layer in self.decoder :
+        for layer in self.decoder:
             x = layer(x)
         return x
-    
-
 
     def call(self, inputs):
-        x, _, _ = self.encode(inputs)
-        x = self.decode(x)
+        z, _, _ = self.encode(inputs)
+        x = self.decode(z)
         return x
-
-
 
     def reparameterize(self, mean, log_var):
         epsilon = tf.random.normal(shape=(tf.shape(mean)[0], self.latent_dim))
         return mean + tf.exp(0.5 * log_var) * epsilon
 
-    
-    def compute_loss(self, inputs, l2_reg_coeff = 0.03):
+    def compute_loss(self, inputs, l2_reg_coeff=0.03, reconstruction_loss_weight=1.0):
         with tf.GradientTape() as tape:
             z, z_mean, z_log_var = self.encode(inputs)
             reconstructed = self.decode(z)
-            loss = self.mse_loss(inputs[..., None], reconstructed[..., None])
+            reconstruction_loss = self.mse_loss(inputs, reconstructed)
             kl_loss = -0.5 * tf.reduce_mean(1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
-            loss += kl_loss
-            l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in self.trainable_variables])
+            kl_loss = tf.reduce_mean(tf.nn.softplus(kl_loss))  
+            loss = reconstruction_loss_weight * reconstruction_loss + kl_loss
+            l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in self.trainable_variables if 'kernel' in v.name])
             regularization_loss = l2_reg_coeff * l2_loss
             total_loss = loss + regularization_loss
-            total_loss /= tf.cast(tf.reduce_prod(tf.shape(inputs)[:]), tf.float32)
-        gradients = tape.gradient(loss, self.trainable_variables)
+        gradients = tape.gradient(total_loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
-        return loss
-
-       
+        return total_loss
 
 
 
@@ -560,13 +647,20 @@ def main_stage1(latent_dim) :
     images_path = './images'
     save_path = './VAE_results'
     save_interval = 150
+    initial_learning_rate = 1e-4
     temporary_interval = 100
 
 
     with strategy.scope() :
         dataset, vocab_size, magnitude = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width, vae_mode=True)
         loss_fn = MeanSquaredError(reduction=tf.keras.losses.Reduction.NONE)
-        optimizer = Adam(learning_rate=0.0002, beta_1=0.5, clipvalue=1.0)
+        lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+            initial_learning_rate,
+            decay_steps=10000,
+            decay_rate=0.9,
+            staircase=True
+        )
+        optimizer = Adam(learning_rate=lr_schedule, beta_1=0.5, clipnorm=1.0)
         vae = VAE(loss_fn, optimizer, latent_dim, BATCH_SIZE, width, height, channel)
         vae.compile(optimizer=optimizer, loss=loss_fn)
 
@@ -649,6 +743,7 @@ def main_stage2(vae, vocab_size, gross_magnitude, latent_dim):
     csv_path_2 = 'descriptions.csv'
     images_path_2 = './images'
     save_path = './samples'
+    initial_learning_rate = 1e-4
     time_embedding_dim = 512
 
     strategy = tf.distribute.MirroredStrategy()
@@ -659,7 +754,13 @@ def main_stage2(vae, vocab_size, gross_magnitude, latent_dim):
     with strategy.scope():
         tensorized_data, _, _ = load_dataset(csv_path_2, images_path_2, GLOBAL_BATCH_SIZE, height, width)
         text2image_model = Text2ImageDiffusionModel(vae, vocab_size, BATCH_SIZE, width, height, channel, alpha, latent_dim)
-        optimizer = Adam(learning_rate=0.0002, beta_1=0.5)
+        lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+            initial_learning_rate,
+            decay_steps=10000,
+            decay_rate=0.9,
+            staircase=True
+        )        
+        optimizer = Adam(learning_rate=lr_schedule, beta_1=0.5)
         loss_fn = MeanSquaredError(reduction=tf.keras.losses.Reduction.NONE)
 
         text2image_model.compile(optimizer=optimizer, loss=loss_fn)
