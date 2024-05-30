@@ -88,7 +88,7 @@ class GroupNorm(layers.Layer):
         tensor_shape = inputs.shape.as_list()
         group_shape = [tensor_shape[0], tensor_shape[1], tensor_shape[2], self.groups, tensor_shape[3] // self.groups]
         inputs = tf.reshape(inputs, group_shape)
-        mean, variance = tf.nn.moments(inputs, [1, 2, 3], keepdims=True)
+        mean, variance = tf.nn.moments(inputs, [1, 2, 4], keepdims=True)
         inputs = (inputs - mean) / tf.sqrt(variance + self.epsilon)
         inputs = tf.reshape(inputs, input_shape)
         return self.gamma * inputs + self.beta
