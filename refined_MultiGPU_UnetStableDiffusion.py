@@ -6,6 +6,7 @@ try:
     from tensorflow.keras.layers import *
     from tensorflow.keras import layers
     from tensorflow.keras.models import Model
+    from tensorflow.keras.initializers import HeNormal
     from tensorflow.keras.optimizers.legacy import Adam
     from tensorflow.keras.losses import MeanSquaredError
     import pandas as pd
