@@ -72,14 +72,17 @@ class GroupNorm(layers.Layer):
         self.groups = groups
         self.axis = axis
         self.epsilon = epsilon
+        self.gamma = None
+        self.beta = None
 
-    def build(self, input_shape):
+    def _initialize_weights(self, input_shape):
+        param_shape = [input_shape[self.axis]]
         self.gamma = self.add_weight(name='gamma',
-                                     shape=(input_shape[self.axis],),
+                                     shape=param_shape,
                                      initializer='ones',
                                      trainable=True)
         self.beta = self.add_weight(name='beta',
-                                    shape=(input_shape[self.axis],),
+                                    shape=param_shape,
                                     initializer='zeros',
                                     trainable=True)
         self.groups = min(self.groups, input_shape[self.axis])
@@ -87,8 +90,15 @@ class GroupNorm(layers.Layer):
     def call(self, inputs):
         input_shape = tf.shape(inputs)
         tensor_shape = inputs.shape.as_list()
+
+        if self.gamma is None or self.beta is None:
+            self._initialize_weights(tensor_shape)
+
+        
         group_shape = [tensor_shape[0], tensor_shape[1], tensor_shape[2], self.groups, tensor_shape[3] // self.groups]
         inputs = tf.reshape(inputs, group_shape)
+
+        
         mean, variance = tf.nn.moments(inputs, [1, 2, 4], keepdims=True)
         inputs = (inputs - mean) / tf.sqrt(variance + self.epsilon)
         inputs = tf.reshape(inputs, input_shape)
