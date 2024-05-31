@@ -28,53 +28,30 @@ Here is the brief summary of the number of parameters in both the DiffusionModel
 | Layer (type)               | Output Shape | Param #     |
 |----------------------------|--------------|-------------|
 | conv2d                     | multiple     | 896         |
-| batch_normalization        | multiple     | 128         |
-| leaky_re_lu                | multiple     | 0           |
-| residual_block             | multiple     | 18624       |
-| conv2d_3                   | multiple     | 18496       |
-| batch_normalization_2      | multiple     | 256         |
-| leaky_re_lu_3              | multiple     | 0           |
-| residual_block_1           | multiple     | 74112       |
-| conv2d_6                   | multiple     | 73856       |
-| batch_normalization_4      | multiple     | 512         |
-| leaky_re_lu_6              | multiple     | 0           |
-| residual_block_2           | multiple     | 295680      |
-| conv2d_9                   | multiple     | 295168      |
-| batch_normalization_6      | multiple     | 1024        |
-| leaky_re_lu_9              | multiple     | 0           |
-| residual_block_3           | multiple     | 1181184     |
-| conv2d_12                  | multiple     | 1180160     |
-| batch_normalization_8      | multiple     | 2048        |
-| leaky_re_lu_12             | multiple     | 0           |
-| residual_block_4           | multiple     | 4721664     |
+| down_block                 | multiple     | 166,720     |
+| down_block_1               | multiple     | 665,216     |
+| down_block_2               | multiple     | 2,657,536   |
+| vae_residual_block_6       | multiple     | 1,181,184   |
+| vae_residual_block_7       | multiple     | 1,181,184   |
+| mid_block2d                | multiple     | 2,559,744   |
+| gsc_20                     | multiple     | 590,592     |
 | flatten                    | multiple     | 0           |
-| dense                      | multiple     | 67110912    |
-| dense_1                    | multiple     | 33587200    |
+| dense                      | multiple     | 536,872,960 |
+| dense_1                    | multiple     | 268,697,600 |
 | reshape                    | multiple     | 0           |
-| conv2d_transpose           | multiple     | 1179904     |
-| batch_normalization_10     | multiple     | 1024        |
-| leaky_re_lu_15             | multiple     | 0           |
-| residual_block_5           | multiple     | 1181184     |
-| conv2d_transpose_1         | multiple     | 295040      |
-| batch_normalization_12     | multiple     | 512         |
-| leaky_re_lu_18             | multiple     | 0           |
-| residual_block_6           | multiple     | 295680      |
-| conv2d_transpose_2         | multiple     | 73792       |
-| batch_normalization_14     | multiple     | 256         |
-| leaky_re_lu_21             | multiple     | 0           |
-| residual_block_7           | multiple     | 74112       |
-| conv2d_transpose_3         | multiple     | 18464       |
-| batch_normalization_16     | multiple     | 128         |
-| leaky_re_lu_24             | multiple     | 0           |
-| residual_block_8           | multiple     | 18624       |
-| conv2d_transpose_4         | multiple     | 4624        |
-| batch_normalization_18     | multiple     | 64          |
-| leaky_re_lu_27             | multiple     | 0           |
-| residual_block_9           | multiple     | 4704        |
-| conv2d_transpose_5         | multiple     | 435         |
-| **Total params**           |              | **111710467**|
-| Trainable params           |              | 111704515   |
-| Non-trainable params       |              | 5952        |
+| conv2d_28                  | multiple     | 590,080     |
+| mid_block2d_1              | multiple     | 2,559,744   |
+| up_block                   | multiple     | 1,182,080   |
+| up_block_1                 | multiple     | 296,128     |
+| up_block_2                 | multiple     | 74,336      |
+| vae_residual_block_21      | multiple     | 18,624      |
+| vae_residual_block_22      | multiple     | 18,624      |
+| vae_residual_block_23      | multiple     | 18,624      |
+| gsc_49                     | multiple     | 9,312       |
+| conv2d_transpose           | multiple     | 867         |
+| **Total params**           |              | **819,342,051** |
+| Trainable params           |              | 819,342,051 |
+| Non-trainable params       |              | 0           |
 
 ### Text2ImageModel
 
@@ -82,11 +59,11 @@ Here is the brief summary of the number of parameters in both the DiffusionModel
 |-----------------------------|--------------|-------------|
 | text_encoder (TextEncoder)  | multiple     | 1688192     |
 | flatten_1 (Flatten)         | multiple     | 0           |
-| vae (VAE)                   | multiple     | 111710467   |
+| vae (VAE)                   | multiple     | 819342051    |
 | u_net_diffusion_module (UNetDiffusionModule) | multiple | 950255424   |
-| **Total params**            |              | **1063654083** |
-| Trainable params            |              | 1063638339   |
-| Non-trainable params        |              | 15744        |
+| **Total params**            |              | **1771293347** |
+| Trainable params            |              | 1771279715   |
+| Non-trainable params        |              | 13632       |
 
 
-**Notable**: The total size of the utilized model is **1,063,654,083 (approximate 1.06B parameters) (3.96 GB)**, dependent on the StableDiffusionModel(***SD***) and Variational Auto-Encoder(***VAE***).
+**Notable**: The total size of the utilized model is **1,771,293,347 (approximate 1.77B parameters) (6.60 GB)**, dependent on the StableDiffusionModel(***SD***) and Variational Auto-Encoder(***VAE***).
