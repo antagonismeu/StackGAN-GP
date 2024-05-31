@@ -289,6 +289,7 @@ class VAE(tf.keras.Model):
             l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in self.trainable_variables if 'kernel' in v.name])
             regularization_loss = l2_reg_coeff * l2_loss
             total_loss = loss + regularization_loss
+            total_loss /= tf.cast(tf.reduce_prod(tf.shape(inputs)[:]), tf.float32)
         gradients = tape.gradient(total_loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
         return total_loss
