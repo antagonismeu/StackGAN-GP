@@ -67,41 +67,33 @@ class TextEncoder(tf.keras.Model):
 
 
 class GroupNorm(layers.Layer):
-    def __init__(self, groups=32, axis=-1, epsilon=1e-5):
-        super(GroupNorm, self).__init__()
+    def __init__(self, groups=32, epsilon=1e-5, **kwargs):
+        super(GroupNorm, self).__init__(**kwargs)
         self.groups = groups
-        self.axis = axis
         self.epsilon = epsilon
-        self.gamma = None
-        self.beta = None
 
-    def _initialize_weights(self, input_shape):
-        param_shape = [input_shape[self.axis]]
-        self.gamma = self.add_weight(name='gamma',
-                                     shape=param_shape,
+    def build(self, input_shape):
+        self.gamma = self.add_weight(shape=(1, 1, 1, input_shape[-1]),
                                      initializer='ones',
-                                     trainable=True)
-        self.beta = self.add_weight(name='beta',
-                                    shape=param_shape,
+                                     trainable=True,
+                                     name='gamma')
+        self.beta = self.add_weight(shape=(1, 1, 1, input_shape[-1]),
                                     initializer='zeros',
-                                    trainable=True)
-        self.groups = min(self.groups, input_shape[self.axis])
+                                    trainable=True,
+                                    name='beta')
+        super(GroupNorm, self).build(input_shape)
 
     def call(self, inputs):
         input_shape = tf.shape(inputs)
-        tensor_shape = inputs.shape.as_list()
-
-        if self.gamma is None or self.beta is None:
-            self._initialize_weights(tensor_shape)
-
+        N, H, W, C = input_shape[0], input_shape[1], input_shape[2], input_shape[3]
         
-        group_shape = [tensor_shape[0], tensor_shape[1], tensor_shape[2], self.groups, tensor_shape[3] // self.groups]
-        inputs = tf.reshape(inputs, group_shape)
-
+        G = tf.minimum(self.groups, C)  
+        inputs = tf.reshape(inputs, [N, H, W, G, C // G])
         
         mean, variance = tf.nn.moments(inputs, [1, 2, 4], keepdims=True)
         inputs = (inputs - mean) / tf.sqrt(variance + self.epsilon)
-        inputs = tf.reshape(inputs, input_shape)
+        
+        inputs = tf.reshape(inputs, [N, H, W, C])
         return self.gamma * inputs + self.beta
 
 
@@ -228,26 +220,33 @@ class VAE(tf.keras.Model):
         self.height = height
         self.batch_size = batch_size
         self.channel = channel
+        self.downblocks = [
+            DownBlock(64, num_down_res_blocks),
+            DownBlock(128, num_down_res_blocks),
+            DownBlock(256, num_down_res_blocks)
+        ]
+
+        self.upblocks = [
+            UpBlock(128, num_up_res_blocks),
+            UpBlock(64, num_up_res_blocks),
+            UpBlock(32, num_up_res_blocks)            
+        ]
 
         self.encoder = [
             Conv2D(32, 3, strides=1, padding='same', kernel_initializer=HeNormal()),
-            DownBlock(64, num_down_res_blocks),
-            DownBlock(128, num_down_res_blocks),
-            DownBlock(256, num_down_res_blocks),
+            *self.downblocks,
             *[VAEResidualBlock(256) for _ in range(num_down_res_blocks)],
             MidBlock2D(256),
             GSC(256),
-            Flatten(),
-            Dense(self.latent_dim + self.latent_dim, kernel_initializer=HeNormal())
+            Conv2D(8, 1, strides=1, padding='same', kernel_initializer=HeNormal()),
+            Reshape((8, self.width // len(self.downblocks), self.height // len(self.downblocks)))
         ]
+
         self.decoder = [
-            Dense(32 * 32 * 256, activation='relu', kernel_initializer=HeNormal()),
-            Reshape((32, 32, 256)),
+            Reshape((self.width // len(self.downblocks), self.height // len(self.downblocks), 8)),
             Conv2D(256, 3, strides=1, padding='same', kernel_initializer=HeNormal()),
             MidBlock2D(256),
-            UpBlock(128, num_up_res_blocks),
-            UpBlock(64, num_up_res_blocks),
-            UpBlock(32, num_up_res_blocks),
+            *self.upblocks,
             *[VAEResidualBlock(32) for _ in range(num_up_res_blocks)],
             GSC(32),
             Conv2DTranspose(3, 3, activation='sigmoid', padding='same', kernel_initializer=HeNormal())
@@ -259,7 +258,7 @@ class VAE(tf.keras.Model):
         x = inputs
         for layer in self.encoder:
             x = layer(x)
-        z_mean, z_log_var = tf.split(x, num_or_size_splits=2, axis=1)
+        z_mean, z_log_var = tf.split(x, num_or_size_splits=2, axis=-1) 
         z = self.reparameterize(z_mean, z_log_var)
         return z, z_mean, z_log_var
 
@@ -275,7 +274,7 @@ class VAE(tf.keras.Model):
         return x
 
     def reparameterize(self, mean, log_var):
-        epsilon = tf.random.normal(shape=(tf.shape(mean)[0], self.latent_dim))
+        epsilon = tf.random.normal(shape=tf.shape(mean))
         return mean + tf.exp(0.5 * log_var) * epsilon
 
     def compute_loss(self, inputs, l2_reg_coeff=0.03, reconstruction_loss_weight=1.0):
@@ -284,7 +283,7 @@ class VAE(tf.keras.Model):
             reconstructed = self.decode(z)
             reconstruction_loss = self.mse_loss(inputs, reconstructed)
             kl_loss = -0.5 * tf.reduce_mean(1 + z_log_var - tf.square(z_mean) - tf.exp(z_log_var))
-            kl_loss = tf.reduce_mean(tf.nn.softplus(kl_loss))  
+            kl_loss = tf.reduce_mean(tf.nn.softplus(kl_loss))
             loss = reconstruction_loss_weight * reconstruction_loss + kl_loss
             l2_loss = tf.add_n([tf.nn.l2_loss(v) for v in self.trainable_variables if 'kernel' in v.name])
             regularization_loss = l2_reg_coeff * l2_loss
@@ -293,7 +292,6 @@ class VAE(tf.keras.Model):
         gradients = tape.gradient(total_loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
         return total_loss
-
 
 
 
@@ -555,7 +553,7 @@ def load_dataset(description_file, image_directory, batch_size, height, width, v
 
     def preprocess_image(image_path):
         img = tf.io.read_file(image_path)
-        img = tf.image.decode_png(img, channels=3)  
+        img = tf.image.decode_jpeg(img, channels=3)  
         img = tf.image.resize(img, [width, height])
         img_array = tf.image.convert_image_dtype(img, tf.float32) / 127.5 - 1.0
         return img_array
@@ -595,7 +593,7 @@ def vae_validation(description_file, model, image_directory, save_path, signatur
         test_image_path = f"{image_directory}/{df['image_id'][201]}"
         def preprocess_image(image_path):
             img = tf.io.read_file(image_path)
-            img = tf.image.decode_png(img, channels=3)  
+            img = tf.image.decode_jpeg(img, channels=3)  
             img = tf.image.resize(img, [width, height])
             img_array = tf.image.convert_image_dtype(img, tf.float32) / 127.5 - 1.0
             return tf.expand_dims(img_array, axis=0)
@@ -687,13 +685,9 @@ def main_stage1(latent_dim) :
 
     @tf.function
     def train_step_stage1(batch) :
-        with tf.GradientTape() as tape :
-            image_inputs = batch
-            print(image_inputs.shape)
-            scaled_loss = vae.compute_loss(image_inputs)
-        gradients = tape.gradient(scaled_loss, vae.trainable_variables)
-        optimizer.apply_gradients(zip(gradients, vae.trainable_variables))
-
+        image_inputs = batch
+        print(image_inputs.shape)
+        scaled_loss = vae.compute_loss(image_inputs)
         return scaled_loss  
 
 
