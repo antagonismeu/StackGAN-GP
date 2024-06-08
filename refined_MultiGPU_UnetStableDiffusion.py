@@ -239,11 +239,11 @@ class VAE(tf.keras.Model):
             MidBlock2D(256),
             GSC(256),
             Conv2D(8, 1, strides=1, padding='same', kernel_initializer=HeNormal()),
-            Reshape((8, self.width // len(self.downblocks), self.height // len(self.downblocks)))
+            Reshape((8, self.width // 2**len(self.downblocks), self.height // 2**len(self.downblocks)))
         ]
 
         self.decoder = [
-            Reshape((self.width // len(self.downblocks), self.height // len(self.downblocks), 8)),
+            Reshape((self.width // 2**len(self.downblocks), self.height // 2**len(self.downblocks), 4)),
             Conv2D(256, 3, strides=1, padding='same', kernel_initializer=HeNormal()),
             MidBlock2D(256),
             *self.upblocks,
@@ -258,7 +258,7 @@ class VAE(tf.keras.Model):
         x = inputs
         for layer in self.encoder:
             x = layer(x)
-        z_mean, z_log_var = tf.split(x, num_or_size_splits=2, axis=-1) 
+        z_mean, z_log_var = tf.split(x, num_or_size_splits=2, axis=1) 
         z = self.reparameterize(z_mean, z_log_var)
         return z, z_mean, z_log_var
 
