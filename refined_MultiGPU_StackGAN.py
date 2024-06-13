@@ -60,9 +60,7 @@ class CA(tf.keras.Model):
     def call(self, x):
         x = self.fc(x)
         mean, logvar = tf.split(x, num_or_size_splits=2, axis=1)
-        std = tf.exp(logvar * 0.5)
-        epsilon = tf.random.normal(shape=std.shape)
-        return mean + std * epsilon
+        return mean, logvar
 
 class ResidualBlock(tf.keras.Model):
     def __init__(self, filters):
@@ -243,6 +241,8 @@ class StageI(tf.keras.Model):
         self.cross_entropy = loss_fn
         self.generator_optimizer = optimizer
         self.discriminator_optimizer = optimizer
+        self.generator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
+        self.discriminator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
     
     def discriminator_loss(self, real_output, fake_output):
         real_loss = self.cross_entropy(tf.ones_like(real_output), real_output)
@@ -266,8 +266,9 @@ class StageI(tf.keras.Model):
         return real_output, fake_output, mu, logvar
     
     
-    def train_step(self, real_output, fake_output, mu, logvar):
+    def train_step(self, text_embeddings, real_images, noise_size) :
         with tf.GradientTape(persistent=True) as tape:
+            real_output, fake_output, mu, logvar = self(text_embeddings, real_images, noise_size)
             d_loss = self.discriminator_loss(real_output, fake_output)
             g_loss = self.generator_loss(fake_output, mu, logvar)
         gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables)
@@ -280,13 +281,18 @@ class StageI(tf.keras.Model):
 
 
 class StageII(tf.keras.Model):
-    def __init__(self, loss_fn, optimizer, learning_rate=0.0002):
+    def __init__(self, loss_fn, optimizer, CAI, GI, noise_size):
         super(StageII, self).__init__()
         self.generator = StageII_Generator()
+        self.g1 = GI
+        self.noise_size = noise_size
+        self.ca1 = CAI
         self.discriminator = StageII_Discriminator()
-        self.cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True)
-        self.generator_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.5)
-        self.discriminator_optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.5)
+        self.cross_entropy = loss_fn
+        self.generator_optimizer = optimizer
+        self.discriminator_optimizer = optimizer
+        self.generator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
+        self.discriminator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
     
     def discriminator_loss(self, real_output, fake_output):
         real_loss = self.cross_entropy(tf.ones_like(real_output), real_output)
@@ -299,11 +305,16 @@ class StageII(tf.keras.Model):
         return gen_loss + kl_div
     
 
-    def train_step(self, stage1_images, c, mu, logvar, real_images):
+    def train_step(self, text, real_images):
         with tf.GradientTape(persistent=True) as tape:
-            generated_images = self.generator([c, stage1_images], training=True)
-            real_output = self.discriminator([real_images, text_embeddings], training=True)
-            fake_output = self.discriminator([generated_images, text_embeddings], training=True)
+            mu, logvar = self.ca1(text, training=True)
+            noise = tf.random.normal([BATCH_SIZE, self.noise_size])
+            c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
+            c0_ = tf.concat([c0, noise], axis=1)
+            preliminary_images = self.g1(c0_, training=True)
+            generated_images = self.generator([c0_, preliminary_images], training=True)
+            real_output = self.discriminator([real_images, c0_], training=True)
+            fake_output = self.discriminator([generated_images, c0_], training=True)
             d_loss = self.discriminator_loss(real_output, fake_output)
             g_loss = self.generator_loss(fake_output, mu, logvar)
         gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables)
@@ -356,7 +367,7 @@ def load_dataset(description_file, image_directory, batch_size, height, width):
 
     dataset = tf.data.Dataset.zip((image_dataset_I, image_dataset_II ,text_dataset))
     dataset = dataset.shuffle(buffer_size=max(len(df)+1, 1024), reshuffle_each_iteration=True).batch(batch_size)
-    return dataset,  len(tokenizer.word_index) + 1, voc_li
+    return dataset,  voc_li 
     
 
 
@@ -374,7 +385,7 @@ def generate_image_from_text(sentence, CA, G_I, G_II, noise_size, path, gross_ra
             img = np.clip(img, 0, 255).astype(np.uint8)
             Image.fromarray(img).save(f'{path}/{signature}.png')
         mu, logvar = CA(inputs)
-        noise = tf.random.normal([BATCH_SIZE, noise_size])
+        noise = tf.random.normal([1, noise_size])
         c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
         c0_ = tf.concat([c0, noise], axis=1)
         generated_images = G_I(c0_)
@@ -408,9 +419,9 @@ def main_stage1(latent_dim) :
     save_interval = 150
 
     with strategy.scope() :
-        dataset, vocab_size, magnitude = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
+        dataset, vocab = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
-        optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.5)
+        optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
         s1 = StageI(latent_dim, cross_entropy, optimizer)
         s1.compile(optimizer=optimizer, loss=cross_entropy)
 
@@ -418,15 +429,15 @@ def main_stage1(latent_dim) :
 
     print(f'Number of available GPUs: {strategy.num_replicas_in_sync}')
 
-
+    def max_length(vectors) :
+        return max(len(vector) for vector in vectors)
 
 
     @tf.function
     def train_step_stage1(batch) :
         shrinked_target, _, text = batch
         print(shrinked_target.shape, text.shape)
-        real_output, fake_output, mu, logvar = s1(text, shrinked_target, noise_size)
-        d_loss, g_loss = s1.train_step(real_output, fake_output, mu, logvar)
+        d_loss, g_loss = s1.train_step(text, shrinked_target, noise_size)
         return g_loss, d_loss  
 
 
@@ -461,7 +472,7 @@ def main_stage1(latent_dim) :
 
         if (epoch + 1) % save_interval == 0:
             sentence = 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background'
-            generate_image_from_text(sentence, ca, g1, None, noise_size, save_path, len(magnitude), epoch + 1, False)
+            generate_image_from_text(sentence, s1.ca, s1.generator, None, noise_size, save_path, max_length(vocab), epoch + 1, False)
             s1.ca.save_weights(f'models/CA{epoch + 1}')
             s1.ca.save_weights(f'models/CA_backup')
             s1.generator.save_weights(f'models/G1{epoch + 1}')
@@ -496,10 +507,10 @@ def main_stage2(ca, g1) :
     save_interval = 150
 
     with strategy.scope() :
-        dataset, vocab_size, magnitude = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
+        dataset, vocab = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
-        optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.5)
-        s2 = StageII(cross_entropy, optimizer)
+        optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
+        s2 = StageII(cross_entropy, optimizer, ca, g1, noise_size)
         s2.compile(optimizer=optimizer, loss=cross_entropy)
 
 
@@ -507,18 +518,14 @@ def main_stage2(ca, g1) :
     print(f'Number of available GPUs: {strategy.num_replicas_in_sync}')
 
 
+    def max_length(vectors) :
+        return max(len(vector) for vector in vectors)
 
 
     @tf.function
     def train_step_stage2(batch) :
         _, final_target, text = batch
-        mu, logvar = ca(text)
-        noise = tf.random.normal([BATCH_SIZE, noise_size])
-        c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
-        c0_ = tf.concat([c0, noise], axis=1)
-        preliminary_images = g1(c0_)
-        print(preliminary_images.shape, final_target.shape, text.shape)
-        d_loss, g_loss = s2.train_step(preliminary_images, text, mu, logvar, final_target)
+        d_loss, g_loss = s2.train_step(text, final_target)
         return g_loss, d_loss  
 
 
@@ -553,7 +560,7 @@ def main_stage2(ca, g1) :
 
         if (epoch + 1) % save_interval == 0:
             sentence = 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background'
-            generate_image_from_text(sentence, ca, g1, g2, noise_size, save_path, len(magnitude), epoch + 1)
+            generate_image_from_text(sentence, ca, g1, s2.generator, noise_size, save_path, max_length(vocab), epoch + 1)
             s2.generator.save_weights(f'models/G2{epoch + 1}')
             s2.disciminator.save_weights(f'models/D2{epoch + 1}')
 
