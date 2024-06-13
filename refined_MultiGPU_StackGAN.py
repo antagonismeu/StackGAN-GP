@@ -52,15 +52,32 @@ def configuration() :
 
 
 
+class TextEncoder(tf.keras.Model):
+    def __init__(self, vocab_size, embedding_dim, gru_units):
+        super(TextEncoder, self).__init__()
+        self.embedding = layers.Embedding(vocab_size, embedding_dim)
+        self.gru = layers.GRU(gru_units)
+    
+    def call(self, inputs):
+        x = self.embedding(inputs)
+        x = self.gru(x)
+        return x
+
+
+
+
 class CA(tf.keras.Model):
-    def __init__(self, output_dim):
+    def __init__(self, output_dim, vocab_size, embedding_dim, gru_units):
         super(CA, self).__init__()
+        self.text_encoder = TextEncoder(vocab_size, embedding_dim, gru_units)
         self.fc = layers.Dense(output_dim * 2)
 
     def call(self, x):
+        x = self.text_encoder(x)
         x = self.fc(x)
         mean, logvar = tf.split(x, num_or_size_splits=2, axis=1)
         return mean, logvar
+
 
 class ResidualBlock(tf.keras.Model):
     def __init__(self, filters):
@@ -233,11 +250,11 @@ class StageII_Discriminator(tf.keras.Model):
 
 
 class StageI(tf.keras.Model):
-    def __init__(self, output_dim, loss_fn, optimizer):
+    def __init__(self, output_dim, loss_fn, optimizer, vocab_size, embedding_dim, gru_units):
         super(StageI, self).__init__()
         self.generator = StageI_Generator()
         self.discriminator = StageI_Discriminator()
-        self.ca = CA(output_dim)
+        self.ca = CA(output_dim, vocab_size, embedding_dim, gru_units)
         self.cross_entropy = loss_fn
         self.generator_optimizer = optimizer
         self.discriminator_optimizer = optimizer
@@ -364,10 +381,11 @@ def load_dataset(description_file, image_directory, batch_size, height, width):
     image_dataset_I = tf.data.Dataset.from_tensor_slices(image_paths).map(preprocess_image_I)
     image_dataset_II = tf.data.Dataset.from_tensor_slices(image_paths).map(preprocess_image_II)
     text_dataset, voc_li = preprocess_text(descriptions)
+    vocabulary = len(tokenizer.word_index) + 1
 
     dataset = tf.data.Dataset.zip((image_dataset_I, image_dataset_II ,text_dataset))
     dataset = dataset.shuffle(buffer_size=max(len(df)+1, 1024), reshuffle_each_iteration=True).batch(batch_size)
-    return dataset,  voc_li 
+    return dataset,  voc_li, vocabulary
     
 
 
@@ -415,14 +433,16 @@ def main_stage1(latent_dim) :
     images_path = './images'
     noise_size = 100
     learning_rate = 2e-4
+    embedding_dim = 200
+    gru_units = 256
     save_path = './StageI'
     save_interval = 150
 
     with strategy.scope() :
-        dataset, vocab = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
+        dataset, vocab, vocab_size = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
         optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
-        s1 = StageI(latent_dim, cross_entropy, optimizer)
+        s1 = StageI(latent_dim, cross_entropy, optimizer, vocab_size, embedding_dim, gru_units)
         s1.compile(optimizer=optimizer, loss=cross_entropy)
 
 
@@ -575,7 +595,7 @@ def main_stage2(ca, g1) :
 
 
 def main(mode="restart"):
-    latent_dim = 1024 
+    latent_dim = 256 
 
 
     def load_state():
