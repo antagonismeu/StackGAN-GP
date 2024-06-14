@@ -395,7 +395,7 @@ def load_dataset(description_file, image_directory, batch_size, height, width):
 
 def generate_images_from_text(descriptions, CA, G_I, G_II, noise_size, path, gross_range, signature, stage2=True):
     try:
-        subfolder = os.path.join(path, signature)
+        subfolder = os.path.join(path, str(signature))
         os.makedirs(subfolder, exist_ok=True)
         
         def postprocedure(img, path, signature):
@@ -415,7 +415,7 @@ def generate_images_from_text(descriptions, CA, G_I, G_II, noise_size, path, gro
             generated_images = G_I(c0_)
             
             if stage2:
-                generated_images = G_II([c0, generated_images], training=True)
+                generated_images = G_II([c0, generated_images])
             
             final_image = generated_images[0]
             nickname = f"GI_{idx + 1}"
@@ -505,7 +505,7 @@ def main_stage1(latent_dim) :
                 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background',
                 'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background'
             ]
-            generate_images_from_text(sentences_group, s1.ca, s1.generator, None, noise_size, save_path, max_length(vocab), epoch + 1, False)
+            generate_images_from_text(sentences_group, s1.ca, s1.generator, None, noise_size, save_path, max_length(vocab), f'specimen{epoch + 1}', False)
             s1.ca.save_weights(f'models/CA{epoch + 1}')
             s1.ca.save_weights(f'models/CA_backup')
             s1.generator.save_weights(f'models/G1{epoch + 1}')
