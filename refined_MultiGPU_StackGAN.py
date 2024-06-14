@@ -393,26 +393,36 @@ def load_dataset(description_file, image_directory, batch_size, height, width):
 
 
 
-def generate_image_from_text(sentence, CA, G_I, G_II, noise_size, path, gross_range, signature, stage2=True):
-    try :                       
-        inputs = [tokenizer.word_index[i] for i in sentence.split(" ")]
-        inputs = tf.keras.preprocessing.sequence.pad_sequences([inputs], maxlen=gross_range, padding="post")
-        inputs = tf.convert_to_tensor(inputs)
-        def postprocedure(img, path, signature) :
+def generate_images_from_text(descriptions, CA, G_I, G_II, noise_size, path, gross_range, signature, stage2=True):
+    try:
+        subfolder = os.path.join(path, signature)
+        os.makedirs(subfolder, exist_ok=True)
+        
+        def postprocedure(img, path, signature):
             img = ((img + 1.0) * 127.5).numpy().astype(np.uint8)
             img = np.clip(img, 0, 255).astype(np.uint8)
             Image.fromarray(img).save(f'{path}/{signature}.png')
-        mu, logvar = CA(inputs)
-        noise = tf.random.normal([1, noise_size])
-        c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
-        c0_ = tf.concat([c0, noise], axis=1)
-        generated_images = G_I(c0_)
-        if stage2 :
-            generated_images = G_II([c0, generated_images], training=True)
-        final_image = generated_images[0]
-        postprocedure(final_image, path, signature)
+
+        for idx, sentence in enumerate(descriptions):
+            inputs = [tokenizer.word_index.get(i, 0) for i in sentence.split(" ")]  
+            inputs = tf.keras.preprocessing.sequence.pad_sequences([inputs], maxlen=gross_range, padding="post")
+            inputs = tf.convert_to_tensor(inputs)
+
+            mu, logvar = CA(inputs)
+            noise = tf.random.normal([1, noise_size])
+            c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
+            c0_ = tf.concat([c0, noise], axis=1)
+            generated_images = G_I(c0_)
+            
+            if stage2:
+                generated_images = G_II([c0, generated_images], training=True)
+            
+            final_image = generated_images[0]
+            nickname = f"GI_{idx + 1}"
+            postprocedure(final_image, subfolder, nickname)
     except Exception as e:
-        print(f"Error encountered during generating image from the given text: {e}")
+        print(f"Error encountered during generating images from the given descriptions: {e}")
+
 
 
 
@@ -491,8 +501,11 @@ def main_stage1(latent_dim) :
             log_file.write(f'Epoch {epoch + 1}/{epochs_stage}, Generator_I Loss: {train_g_loss.numpy()} Discriminator_I Loss: {train_d_loss.numpy()}\n')
 
         if (epoch + 1) % save_interval == 0:
-            sentence = 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background'
-            generate_image_from_text(sentence, s1.ca, s1.generator, None, noise_size, save_path, max_length(vocab), epoch + 1, False)
+            sentences_group = [
+                'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background',
+                'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background'
+            ]
+            generate_images_from_text(sentences_group, s1.ca, s1.generator, None, noise_size, save_path, max_length(vocab), epoch + 1, False)
             s1.ca.save_weights(f'models/CA{epoch + 1}')
             s1.ca.save_weights(f'models/CA_backup')
             s1.generator.save_weights(f'models/G1{epoch + 1}')
@@ -579,8 +592,11 @@ def main_stage2(ca, g1) :
             log_file.write(f'Epoch {epoch + 1}/{epochs_stage}, Generator_II Loss: {train_g_loss.numpy()} Discriminator_II Loss: {train_d_loss.numpy()}\n')
 
         if (epoch + 1) % save_interval == 0:
-            sentence = 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background'
-            generate_image_from_text(sentence, ca, g1, s2.generator, noise_size, save_path, max_length(vocab), epoch + 1)
+            sentences_group = [
+                'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background',
+                'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background'
+            ]
+            generate_images_from_text(sentences_group, ca, g1, s2.generator, noise_size, save_path, max_length(vocab), epoch + 1)
             s2.generator.save_weights(f'models/G2{epoch + 1}')
             s2.disciminator.save_weights(f'models/D2{epoch + 1}')
 
