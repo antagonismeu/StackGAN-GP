@@ -78,10 +78,10 @@ class CA(tf.keras.Model):
         self.fc = layers.Dense(output_dim * 2)
 
     def call(self, x):
-        x = self.text_encoder(x)
-        x = self.fc(x)
-        mean, logvar = tf.split(x, num_or_size_splits=2, axis=1)
-        return mean, logvar
+        x_ = self.text_encoder(x)
+        y = self.fc(x_)
+        mean, logvar = tf.split(y, num_or_size_splits=2, axis=1)
+        return mean, logvar, x_
 
 
 class ResidualBlock(tf.keras.Model):
@@ -279,12 +279,12 @@ class StageI(tf.keras.Model):
 
     def call(self, text_embeddings, real_images, noise_size) :
         noise = tf.random.normal([real_images.shape[0], noise_size])
-        mu, logvar = self.ca(text_embeddings)
+        mu, logvar, embeddings = self.ca(text_embeddings)
         c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
         c0 = tf.concat([c0, noise], axis=1)
         generated_images = self.generator(c0, training=True)
-        real_output = self.discriminator([real_images, text_embeddings], training=True)
-        fake_output = self.discriminator([generated_images, text_embeddings], training=True)
+        real_output = self.discriminator([real_images, embeddings], training=True)
+        fake_output = self.discriminator([generated_images, embeddings], training=True)
         return real_output, fake_output, mu, logvar
     
     
@@ -329,14 +329,14 @@ class StageII(tf.keras.Model):
 
     def train_step(self, text, real_images):
         with tf.GradientTape(persistent=True) as tape:
-            mu, logvar = self.ca1(text, training=True)
+            mu, logvar, embeddings = self.ca1(text, training=True)
             noise = tf.random.normal([BATCH_SIZE, self.noise_size])
             c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
             c0_ = tf.concat([c0, noise], axis=1)
             preliminary_images = self.g1(c0_, training=True)
             generated_images = self.generator([c0_, preliminary_images], training=True)
-            real_output = self.discriminator([real_images, c0_], training=True)
-            fake_output = self.discriminator([generated_images, c0_], training=True)
+            real_output = self.discriminator([real_images, embeddings], training=True)
+            fake_output = self.discriminator([generated_images, embeddings], training=True)
             d_loss = self.discriminator_loss(real_output, fake_output)
             g_loss = self.generator_loss(fake_output, mu, logvar)
         gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables)
@@ -449,7 +449,7 @@ def main_stage1(latent_dim) :
     noise_size = 100
     learning_rate = 2e-4
     embedding_dim = 200
-    gru_units = 256
+    gru_units = latent_dim
     save_path = './StageI'
     save_interval = 150
 
