@@ -619,10 +619,18 @@ def main_stage2(ca, g1) :
 def main(mode="restart"):
     latent_dim = 256 
 
+    def max_length(vectors) :
+        return max(len(vector) for vector in vectors)
+
+
 
     def load_state():
         try:
-            ca = CA(latent_dim)
+            csv_path = 'descriptions.csv'
+            images_path = './images' 
+            embedding_dim = 200       
+            _, vocab, _, _  = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE_2, height, width)
+            ca = CA(latent_dim, max_length(vocab), embedding_dim, latent_dim)
             ca.load_weights('./models/CA_backup')
             g1 = StageI_Generator()
             g1.load_weights('./models/G1_backup')            
