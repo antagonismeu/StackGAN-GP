@@ -422,7 +422,7 @@ def generate_images_from_text(descriptions, CA, G_I, G_II, noise_size, path, gro
             generated_images = G_I(c0_)
             
             if stage2:
-                generated_images = G_II([c0, generated_images])
+                generated_images = G_II([c0_, generated_images])
             
             final_image = generated_images[0]
             nickname = f"GI_{idx + 1}"
@@ -602,9 +602,9 @@ def main_stage2(ca, g1) :
                 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background',
                 'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background'
             ]
-            generate_images_from_text(sentences_group, ca, g1, s2.generator, noise_size, save_path, max_length(vocab), f'N{epoch + 1}')
+            generate_images_from_text(sentences_group, s2.ca1, s2.g1, s2.generator, noise_size, save_path, max_length(vocab), f'N{epoch + 1}')
             s2.generator.save_weights(f'models/G2{epoch + 1}')
-            s2.disciminator.save_weights(f'models/D2{epoch + 1}')
+            s2.discriminator.save_weights(f'models/D2{epoch + 1}')
 
     print('''
         -----------------------------
