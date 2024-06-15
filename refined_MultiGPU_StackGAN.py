@@ -295,9 +295,9 @@ class StageI(tf.keras.Model):
             real_output, fake_output, mu, logvar = self(text_embeddings, real_images, noise_size)
             d_loss = self.discriminator_loss(real_output, fake_output)
             g_loss = self.generator_loss(fake_output, mu, logvar)
-        gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables)
+        gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables + self.ca.trainable_variables)
         gradients_of_discriminator = tape.gradient(d_loss, self.discriminator.trainable_variables)
-        self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables))
+        self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables + self.ca.trainable_variables))
         self.discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, self.discriminator.trainable_variables))
         
         return d_loss, g_loss
@@ -341,9 +341,9 @@ class StageII(tf.keras.Model):
             fake_output = self.discriminator([generated_images, embeddings], training=True)
             d_loss = self.discriminator_loss(real_output, fake_output)
             g_loss = self.generator_loss(fake_output, mu, logvar)
-        gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables)
+        gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables + self.ca1.trainable_variables + self.g1.trainable_variables)
         gradients_of_discriminator = tape.gradient(d_loss, self.discriminator.trainable_variables)
-        self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables))
+        self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables + self.ca1.trainable_variables + self.g1.trainable_variables))
         self.discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, self.discriminator.trainable_variables))
         
         return d_loss, g_loss
