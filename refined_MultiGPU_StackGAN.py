@@ -32,19 +32,22 @@ if gpu_devices:
 
 
 global WIDTH, HEIGHT, CHANNEL
+strategy = tf.distribute.MirroredStrategy()
 width, height = 256, 256
-assert width >= 128, height >= 128                                  #INFERIOR BOUNDARY : width, height = 128, 128  
+assert width >= 128; height >= 128                                  #INFERIOR BOUNDARY : width, height = 128, 128  
 WIDTH , HEIGHT = width, height
 BATCH_SIZE = 64  
+BATCH_SIZE_2 = 16
 '''
 Note: the relationship between GPUs and SIZE is complicated, 
 meaning that larger size will guarantee the lower storing usage of GPUS, 
 but increase the rate of occupation of GPU in the meantime 
 '''                             
 channel = 3
-assert BATCH_SIZE >= 1, channel == 3
+assert BATCH_SIZE >= 1; channel == 3; BATCH_SIZE_2 >= 1
 CHANNEL = channel
 GLOBAL_BATCH_SIZE = BATCH_SIZE * tf.distribute.MirroredStrategy().num_replicas_in_sync
+GLOBAL_BATCH_SIZE_2 = BATCH_SIZE_2 * tf.distribute.MirroredStrategy().num_replicas_in_sync
 
 
 
@@ -188,7 +191,6 @@ class StageII_Generator(tf.keras.Model):
         
     def spatial_replication(self, c, height, width):
         c = tf.expand_dims(tf.expand_dims(c, 1), 1)
-        c = tf.reshape(c[0], 1, 1, c[1])
         c = tf.tile(c, [1, height, width, 1])
         return c
 
@@ -330,7 +332,7 @@ class StageII(tf.keras.Model):
     def train_step(self, text, real_images):
         with tf.GradientTape(persistent=True) as tape:
             mu, logvar, embeddings = self.ca1(text, training=True)
-            noise = tf.random.normal([BATCH_SIZE, self.noise_size])
+            noise = tf.random.normal([BATCH_SIZE_2, self.noise_size])
             c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
             c0_ = tf.concat([c0, noise], axis=1)
             preliminary_images = self.g1(c0_, training=True)
@@ -442,7 +444,6 @@ def main_stage1(latent_dim) :
     ''')
     configuration()
     coversion_log_path = './log/StageI.log'
-    strategy = tf.distribute.MirroredStrategy()
     epochs_stage = 200
     csv_path = 'descriptions.csv'
     images_path = './images'
@@ -505,7 +506,7 @@ def main_stage1(latent_dim) :
         with open(coversion_log_path, 'a') as log_file:
             log_file.write(f'Epoch {epoch + 1}/{epochs_stage}, Generator_I Loss: {train_g_loss.numpy()} Discriminator_I Loss: {train_d_loss.numpy()}\n')
 
-        if (epoch + 1) % save_interval == 0 or epoch == epochs_stage :
+        if (epoch + 1) % save_interval == 0 or epoch == epochs_stage - 1:
             sentences_group = [
                 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background',
                 'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background'
@@ -535,7 +536,6 @@ def main_stage2(ca, g1) :
     ''')
     configuration()
     coversion_log_path = './log/StageII.log'
-    strategy = tf.distribute.MirroredStrategy()
     epochs_stage = 200
     csv_path = 'descriptions.csv'
     images_path = './images'
@@ -545,7 +545,7 @@ def main_stage2(ca, g1) :
     save_interval = 50
 
     with strategy.scope() :
-        dataset, vocab, vocab_size, _ = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
+        dataset, vocab, vocab_size, _ = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE_2, height, width)
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
         optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
         s2 = StageII(cross_entropy, optimizer, ca, g1, noise_size)
@@ -563,6 +563,7 @@ def main_stage2(ca, g1) :
     @tf.function
     def train_step_stage2(batch) :
         _, final_target, text = batch
+        print(text.shape, final_target.shape)
         d_loss, g_loss = s2.train_step(text, final_target)
         return g_loss, d_loss  
 
@@ -596,7 +597,7 @@ def main_stage2(ca, g1) :
         with open(coversion_log_path, 'a') as log_file:
             log_file.write(f'Epoch {epoch + 1}/{epochs_stage}, Generator_II Loss: {train_g_loss.numpy()} Discriminator_II Loss: {train_d_loss.numpy()}\n')
 
-        if (epoch + 1) % save_interval == 0 or epoch == epochs_stage :
+        if (epoch + 1) % save_interval == 0 or epoch == epochs_stage - 1 :
             sentences_group = [
                 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background',
                 'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background'
