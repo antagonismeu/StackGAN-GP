@@ -390,7 +390,7 @@ def load_dataset(description_file, image_directory, batch_size, height, width):
 
     dataset = tf.data.Dataset.zip((image_dataset_I, image_dataset_II ,text_dataset))
     dataset = dataset.shuffle(buffer_size=max(len(df)+1, 1024), reshuffle_each_iteration=True).batch(batch_size)
-    return dataset,  voc_li, vocabulary
+    return dataset,  voc_li, vocabulary, tokenizer
     
 
 
@@ -413,7 +413,7 @@ def generate_images_from_text(descriptions, CA, G_I, G_II, noise_size, path, gro
             inputs = tf.keras.preprocessing.sequence.pad_sequences([inputs], maxlen=gross_range, padding="post")
             inputs = tf.convert_to_tensor(inputs)
 
-            mu, logvar = CA(inputs)
+            mu, logvar, _ = CA(inputs)
             noise = tf.random.normal([1, noise_size])
             c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
             c0_ = tf.concat([c0, noise], axis=1)
@@ -443,10 +443,10 @@ def main_stage1(latent_dim) :
     configuration()
     coversion_log_path = './log/StageI.log'
     strategy = tf.distribute.MirroredStrategy()
-    epochs_stage = 50000
+    epochs_stage = 200
     csv_path = 'descriptions.csv'
     images_path = './images'
-    noise_size = 100
+    noise_size = 200
     learning_rate = 2e-4
     embedding_dim = 200
     gru_units = latent_dim
@@ -454,7 +454,7 @@ def main_stage1(latent_dim) :
     save_interval = 150
 
     with strategy.scope() :
-        dataset, vocab, vocab_size = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
+        dataset, vocab, vocab_size, _  = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
         optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
         s1 = StageI(latent_dim, cross_entropy, optimizer, vocab_size, embedding_dim, gru_units)
@@ -505,7 +505,7 @@ def main_stage1(latent_dim) :
         with open(coversion_log_path, 'a') as log_file:
             log_file.write(f'Epoch {epoch + 1}/{epochs_stage}, Generator_I Loss: {train_g_loss.numpy()} Discriminator_I Loss: {train_d_loss.numpy()}\n')
 
-        if (epoch + 1) % save_interval == 0:
+        if (epoch + 1) % save_interval == 0 or epoch == epochs_stage :
             sentences_group = [
                 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background',
                 'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background'
@@ -536,16 +536,16 @@ def main_stage2(ca, g1) :
     configuration()
     coversion_log_path = './log/StageII.log'
     strategy = tf.distribute.MirroredStrategy()
-    epochs_stage = 20000
+    epochs_stage = 200
     csv_path = 'descriptions.csv'
     images_path = './images'
-    noise_size = 100
+    noise_size = 200
     learning_rate = 2e-4
     save_path = './samples'
-    save_interval = 150
+    save_interval = 50
 
     with strategy.scope() :
-        dataset, vocab = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
+        dataset, vocab, vocab_size, _ = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
         optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
         s2 = StageII(cross_entropy, optimizer, ca, g1, noise_size)
@@ -596,7 +596,7 @@ def main_stage2(ca, g1) :
         with open(coversion_log_path, 'a') as log_file:
             log_file.write(f'Epoch {epoch + 1}/{epochs_stage}, Generator_II Loss: {train_g_loss.numpy()} Discriminator_II Loss: {train_d_loss.numpy()}\n')
 
-        if (epoch + 1) % save_interval == 0:
+        if (epoch + 1) % save_interval == 0 or epoch == epochs_stage :
             sentences_group = [
                 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background',
                 'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background'
