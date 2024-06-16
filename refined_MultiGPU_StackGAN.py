@@ -5,12 +5,8 @@ try:
         raise ImportError("Please upgrade your TensorFlow to version 2.x")
     from tensorflow.keras.layers import *
     from tensorflow.keras import layers
-    from tensorflow.keras.models import Model
-    from tensorflow.keras.initializers import HeNormal
-    from tensorflow.keras.optimizers.legacy import Adam
-    from tensorflow.keras.losses import MeanSquaredError
     import pandas as pd
-    import pickle, argparse, glob
+    import argparse
     from PIL import Image
     import numpy as np
 except Exception as e:
@@ -64,10 +60,14 @@ class TextEncoder(tf.keras.Model):
     def __init__(self, vocab_size, embedding_dim, gru_units):
         super(TextEncoder, self).__init__()
         self.embedding = layers.Embedding(vocab_size, embedding_dim)
+        self.conv1 = layers.Conv1D(embedding_dim, kernel_size=5)
+        self.conv2 = layers.Conv1D(embedding_dim, kernel_size=3)
         self.gru = layers.GRU(gru_units)
     
     def call(self, inputs):
         x = self.embedding(inputs)
+        x = self.conv1(x)
+        x = self.conv2(x)
         x = self.gru(x)
         return x
 
@@ -444,7 +444,7 @@ def main_stage1(latent_dim) :
     ''')
     configuration()
     coversion_log_path = './log/StageI.log'
-    epochs_stage = 200
+    epochs_stage = 5000
     csv_path = 'descriptions.csv'
     images_path = './images'
     noise_size = 200
@@ -536,7 +536,7 @@ def main_stage2(ca, g1) :
     ''')
     configuration()
     coversion_log_path = './log/StageII.log'
-    epochs_stage = 200
+    epochs_stage = 500
     csv_path = 'descriptions.csv'
     images_path = './images'
     noise_size = 200
