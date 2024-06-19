@@ -39,7 +39,7 @@ meaning that larger size will guarantee the lower storing usage of GPUS,
 but increase the rate of occupation of GPU in the meantime 
 '''                             
 channel = 3
-assert BATCH_SIZE >= 1; channel == 3; BATCH_SIZE_2 >= 1
+assert BATCH_SIZE >= 1; channel == 3
 CHANNEL = channel
 GLOBAL_BATCH_SIZE = BATCH_SIZE * tf.distribute.MirroredStrategy().num_replicas_in_sync
 
@@ -271,7 +271,7 @@ def main_stage1() :
         sparse_tensorized_data = strategy.experimental_distribute_dataset(dataset)
         iterator = iter(sparse_tensorized_data)
 
-        num, total_g_losses, total_d_losses = 0, 0, 0
+        num = 0
         for num_, batch in enumerate(iterator):
             loss = distributed_train_stage1(batch)
             num += 1
