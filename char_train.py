@@ -1,4 +1,4 @@
-import os
+import os, argparse
 try:
     import tensorflow as tf
     if tf.__version__.startswith('1'):
@@ -105,22 +105,21 @@ class CharCnnRnn(tf.keras.Model):
         positive_pairs = tf.linalg.diag_part(similarity)
         num_pairs = tf.shape(positive_pairs)[0]
 
-        losses = []
-        for i in range(num_pairs):
+        def compute_loss(i):
             loss_i = 0.0
             for j in range(num_pairs):
                 if i != j:
                     loss_i += tf.maximum(0.0, margin - positive_pairs[i] + similarity[i, j])
                     loss_i += tf.maximum(0.0, margin - positive_pairs[i] + similarity[j, i])
-            losses.append(loss_i / tf.cast(num_pairs - 1, tf.float32))
+            return loss_i / tf.cast(num_pairs - 1, tf.float32)
 
-        losses = tf.stack(losses)
+        losses = tf.map_fn(compute_loss, tf.range(num_pairs), dtype=tf.float32)
         if reduction == tf.keras.losses.Reduction.SUM :
             sje_loss = tf.reduce_mean(losses) 
         else :
             sje_loss = losses
-        correct_text_to_image = tf.reduce_sum(tf.cast(tf.argmax(similarity, axis=1) == tf.range(num_pairs), tf.float32))
-        correct_image_to_text = tf.reduce_sum(tf.cast(tf.argmax(similarity, axis=0) == tf.range(num_pairs), tf.float32))
+        correct_text_to_image = tf.reduce_sum(tf.cast(tf.argmax(similarity, axis=1, output_type=tf.int32) == tf.range(num_pairs, dtype=tf.int32), tf.float32))
+        correct_image_to_text = tf.reduce_sum(tf.cast(tf.argmax(similarity, axis=0, output_type=tf.int32) == tf.range(num_pairs, dtype=tf.int32), tf.float32))
 
         accuracy = (correct_text_to_image + correct_image_to_text) / (2 * tf.cast(num_pairs, tf.float32))
 
@@ -134,13 +133,15 @@ class CharCnnRnn(tf.keras.Model):
             text_embeds = self(texts, training=True)
             loss_1, acc_1 = self.sje_loss(images, text_embeds, reduction=tf.keras.losses.Reduction.NONE)
             loss_2, acc_2 = 0, 0
+            acc = acc_1 + acc_2
             if symmetric :
                 loss_2, acc_2 = self.sje_loss(text_embeds, images, reduction=tf.keras.losses.Reduction.NONE)
+                acc = (acc_1 + acc_2) / 2
             loss = loss_1 + loss_2
 
         gradients = tape.gradient(loss, self.trainable_variables)
         self.optimizer.apply_gradients(zip(gradients, self.trainable_variables))
-        return loss, acc_1, acc_2
+        return loss, acc
 
 
 
@@ -212,7 +213,7 @@ def load_dataset(description_file, image_directory, batch_size, height, width, m
 
 
 
-def main_stage1() :
+def main_stage1(max_len, path, recover=False) :
     print('''
         -----------------------------
         ---Stage 1 Is Initialized-----  
@@ -227,7 +228,7 @@ def main_stage1() :
     save_interval = 150
 
     with strategy.scope() :
-        dataset = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
+        dataset = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width, max_len)
         initial_learning_rate = 0.001
         lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
             initial_learning_rate,
@@ -240,6 +241,8 @@ def main_stage1() :
         optimizer = tf.keras.optimizers.RMSprop(learning_rate=lr_schedule)
         char = CharCnnRnn(optimizer)
         char.compile(optimizer=optimizer)
+        if recover :
+            char.load_weights(f'models/{path}')
 
 
 
@@ -253,17 +256,16 @@ def main_stage1() :
         images, _, text = batch
         images = tf.reshape(images, [BATCH_SIZE, -1])
         print(images.shape, text.shape)
-        loss, acc1, acc2 = char.train_step(text, images)
-        print(f'txt fit to image: {acc2} \n images fit to txt: {acc1}')
-        return loss, acc1, acc2 
+        loss, acc = char.train_step(text, images)
+        return loss, acc
 
 
     @tf.function
     def distributed_train_stage1(datum) :
-        loss, acc1, acc2 = strategy.run(train_step_stage1, args=(datum,))
+        loss, acc = strategy.run(train_step_stage1, args=(datum,))
         loss = strategy.reduce(tf.distribute.ReduceOp.SUM, loss, axis=None)
-        return loss
-
+        acc = strategy.reduce(tf.distribute.ReduceOp.SUM, acc, axis=None)
+        return loss, acc
 
 
 
@@ -271,18 +273,20 @@ def main_stage1() :
         sparse_tensorized_data = strategy.experimental_distribute_dataset(dataset)
         iterator = iter(sparse_tensorized_data)
 
-        num = 0
+        num, loss, acc = 0, 0, 0
         for num_, batch in enumerate(iterator):
-            loss = distributed_train_stage1(batch)
+            loss_, acc_ = distributed_train_stage1(batch)
             num += 1
-            loss += loss
-            print(f'per_batch_loss:{loss} epoch:{epoch + 1} batch_index:{num_+1}')
+            loss += loss_
+            acc += acc_
+            print(f'per_batch_loss:{loss_} per_batch_accuracy:{acc_} epoch:{epoch + 1} batch_index:{num_+1}')
         loss = loss / num
+        acc = acc / num
 
 
-        print(f'Epoch {epoch + 1}/{epochs_stage}, Loss:{loss.numpy()}')
+        print(f'Epoch {epoch + 1}/{epochs_stage}, Loss:{loss.numpy()}, Accuracy:{acc.numpy()}')
         with open(coversion_log_path, 'a') as log_file:
-            log_file.write(f'Epoch {epoch + 1}/{epochs_stage}, Loss:{loss.numpy()}\n')
+            log_file.write(f'Epoch {epoch + 1}/{epochs_stage}, Loss:{loss.numpy()}, Accuracy: {acc.numpy()}\n')
 
         if (epoch + 1) % save_interval == 0 or epoch == epochs_stage - 1:
             char.save_weights(f'models/CharCNNRnn{epoch + 1}')
@@ -295,4 +299,10 @@ def main_stage1() :
     ''')
 
 if __name__ == '__main__' :
-    main_stage1()
+    parser = argparse.ArgumentParser(description='define checkpoints and recover the previous training')
+    parser.add_argument('-path', type=str, nargs='?', default=None, help='Path to the directory or file')
+    parser.add_argument('--flag', action='store_true', help='A boolean flag')
+    args = parser.parse_args()
+    flag = parser.flag
+    module_path = args.path
+    main_stage1(256, module_path, flag)
