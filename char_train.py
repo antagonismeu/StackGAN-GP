@@ -239,6 +239,11 @@ def main_stage1(max_len, path, recover=False) :
 
         
         optimizer = tf.keras.optimizers.RMSprop(learning_rate=lr_schedule)
+        '''
+        Warning:
+        if the previous version is implemented under tf(2.11)(not include 2.11)
+        the restoring line should be modified like this tf.keras.optimizers.legacy.RMSprop
+        '''
         char = CharCnnRnn(optimizer)
         char.compile(optimizer=optimizer)
         if recover :
@@ -303,6 +308,6 @@ if __name__ == '__main__' :
     parser.add_argument('-path', type=str, nargs='?', default=None, help='Path to the directory or file')
     parser.add_argument('--flag', action='store_true', help='A boolean flag')
     args = parser.parse_args()
-    flag = parser.flag
+    flag = args.flag
     module_path = args.path
     main_stage1(256, module_path, flag)

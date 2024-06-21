@@ -1,4 +1,5 @@
 import os
+from char_train import CharCnnRnn
 try:
     import tensorflow as tf
     if tf.__version__.startswith('1'):
@@ -49,6 +50,15 @@ GLOBAL_BATCH_SIZE_2 = BATCH_SIZE_2 * tf.distribute.MirroredStrategy().num_replic
 
 
 def configuration() :
+    module_path_1 = 'models/CharCNNRnn280.index'
+    module_path_2 = 'models/checkpoint'
+    module_path_3 = 'models/CharCNNRnn280.data-00000-of-00001'
+    module_list = [module_path_1, module_path_2, module_path_3]
+    for element in module_list :
+        flag = os.path.exists(element)
+        if flag :
+            continue
+        raise FileNotFoundError(f"Insufficient Resource. The required file '{element}' does not exist.")
     os.makedirs('./log', exist_ok=True)
     os.makedirs('./models', exist_ok=True)
     os.makedirs('./samples', exist_ok=True)
@@ -56,32 +66,16 @@ def configuration() :
 
 
 
-class TextEncoder(tf.keras.Model):
-    def __init__(self, vocab_size, embedding_dim, gru_units):
-        super(TextEncoder, self).__init__()
-        self.embedding = layers.Embedding(vocab_size, embedding_dim)
-        self.conv1 = layers.Conv1D(embedding_dim, kernel_size=5)
-        self.conv2 = layers.Conv1D(embedding_dim, kernel_size=3)
-        self.gru = layers.GRU(gru_units)
-    
-    def call(self, inputs):
-        x = self.embedding(inputs)
-        x = self.conv1(x)
-        x = self.conv2(x)
-        x = self.gru(x)
-        return x
-
-
 
 
 class CA(tf.keras.Model):
-    def __init__(self, output_dim, vocab_size, embedding_dim, gru_units):
+    def __init__(self, output_dim, char):
         super(CA, self).__init__()
-        self.text_encoder = TextEncoder(vocab_size, embedding_dim, gru_units)
+        self.Char = char
         self.fc = layers.Dense(output_dim * 2)
 
     def call(self, x):
-        x_ = self.text_encoder(x)
+        x_ = self.Char(x, training=False)
         y = self.fc(x_)
         mean, logvar = tf.split(y, num_or_size_splits=2, axis=1)
         return mean, logvar, x_
@@ -257,11 +251,11 @@ class StageII_Discriminator(tf.keras.Model):
 
 
 class StageI(tf.keras.Model):
-    def __init__(self, output_dim, loss_fn, optimizer, vocab_size, embedding_dim, gru_units):
+    def __init__(self, output_dim, loss_fn, optimizer, char):
         super(StageI, self).__init__()
         self.generator = StageI_Generator()
         self.discriminator = StageI_Discriminator()
-        self.ca = CA(output_dim, vocab_size, embedding_dim, gru_units)
+        self.ca = CA(output_dim, char)
         self.cross_entropy = loss_fn
         self.generator_optimizer = optimizer
         self.discriminator_optimizer = optimizer
@@ -348,87 +342,117 @@ class StageII(tf.keras.Model):
         
         return d_loss, g_loss
 
+
+
+
+
+
+class DataProcessor:
+    def __init__(self, description_file, image_directory, batch_size, height, width, max_len=256):
+        self.description_file = description_file
+        self.image_directory = image_directory
+        self.batch_size = batch_size
+        self.height = height
+        self.width = width
+        self.max_len = max_len
         
+        self.df = pd.read_csv(description_file)
+        self.descriptions = [desc.replace('"', '') for desc in self.df['description']]
+        self.image_paths = [f"{image_directory}/{image_id}" for image_id in self.df['image_id']]
+        
+        self.tokenizer = None
+        self.vocabulary = None
 
+    def str_to_labelvec(self, string, max_str_len):
+        string = string.lower()
+        alphabet = "abcdefghijklmnopqrstuvwxyz0123456789-,;.!?:'\"/\\|_@#$%^&*~`+-=<>()[]{} "
+        alpha_to_num = {k: v + 1 for k, v in zip(alphabet, range(len(alphabet)))}
+        labels = tf.zeros(max_str_len, dtype=tf.int32)
+        max_i = min(max_str_len, len(string))
+        for i in range(max_i):
+            char_index = alpha_to_num.get(string[i], alpha_to_num[' '])
+            labels = tf.tensor_scatter_nd_update(labels, [[i]], [char_index])    
+        return labels, alpha_to_num
 
+    def labelvec_to_onehot(self, labels):
+        labels = tf.convert_to_tensor(labels, dtype=tf.int32)
+        one_hot = tf.one_hot(labels, depth=71)    
+        one_hot = one_hot[:, 1:]   
+        one_hot = tf.transpose(one_hot, perm=[1, 0])    
+        return one_hot
 
-def load_dataset(description_file, image_directory, batch_size, height, width):
-    df = pd.read_csv(description_file)
-    descriptions = [desc.replace('"', '') for desc in df['description']]
-    image_paths = [f"{image_directory}/{image_id}" for image_id in df['image_id']]
+    def preparation_txt(self, string, max_str_len):
+        labels, tokenizer = self.str_to_labelvec(string, max_str_len)
+        one_hot = self.labelvec_to_onehot(labels)
+        return one_hot, tokenizer
 
-    def preprocess_image_I(image_path):
+    def preprocess_image_I(self, image_path):
         img = tf.io.read_file(image_path)
         img = tf.image.decode_jpeg(img, channels=3)  
-        img = tf.image.resize(img, [width//4, height//4])
+        img = tf.image.resize(img, [self.width//4, self.height//4])
         img_array = tf.image.convert_image_dtype(img, tf.float32) / 127.5 - 1.0
         return img_array        
 
-
-    def preprocess_image_II(image_path):
+    def preprocess_image_II(self, image_path):
         img = tf.io.read_file(image_path)
         img = tf.image.decode_jpeg(img, channels=3)  
-        img = tf.image.resize(img, [width, height])
+        img = tf.image.resize(img, [self.width, self.height])
         img_array = tf.image.convert_image_dtype(img, tf.float32) / 127.5 - 1.0
         return img_array        
 
-    def preprocess_text(descriptions):
-        global tokenizer
-        tokenizer = tf.keras.preprocessing.text.Tokenizer(filters="")
-        tokenizer.fit_on_texts(descriptions)
-	
-        voc_li = tokenizer.texts_to_sequences(descriptions)
-
-        voc_li = tf.keras.preprocessing.sequence.pad_sequences(voc_li, padding="post")
-
-
-        text_dataset = tf.data.Dataset.from_tensor_slices(voc_li)        
-        return text_dataset, voc_li
-        
-    image_dataset_I = tf.data.Dataset.from_tensor_slices(image_paths).map(preprocess_image_I)
-    image_dataset_II = tf.data.Dataset.from_tensor_slices(image_paths).map(preprocess_image_II)
-    text_dataset, voc_li = preprocess_text(descriptions)
-    vocabulary = len(tokenizer.word_index) + 1
-
-    dataset = tf.data.Dataset.zip((image_dataset_I, image_dataset_II ,text_dataset))
-    dataset = dataset.shuffle(buffer_size=max(len(df)+1, 1024), reshuffle_each_iteration=True).batch(batch_size)
-    return dataset,  voc_li, vocabulary, tokenizer
+    def preprocess_text(self):
+        txt_tensors = []
+        for sentence in self.descriptions:
+            tensor, tokenizer = self.preparation_txt(sentence, self.max_len)
+            txt_tensors.append(tensor)
+        text_dataset = tf.data.Dataset.from_tensor_slices(txt_tensors)
+        self.tokenizer = tokenizer
+        return text_dataset
     
 
+    def postprocedure(self, img, path, signature):
+        img = ((img + 1.0) * 127.5).numpy().astype(np.uint8)
+        img = np.clip(img, 0, 255).astype(np.uint8)
+        Image.fromarray(img).save(f'{path}/{signature}.png')
 
 
 
-
-
-def generate_images_from_text(descriptions, CA, G_I, G_II, noise_size, path, gross_range, signature, stage2=True):
-    try:
-        subfolder = os.path.join(path, str(signature))
-        os.makedirs(subfolder, exist_ok=True)
+    def preprocedure(self):
+        image_dataset_I = tf.data.Dataset.from_tensor_slices(self.image_paths).map(self.preprocess_image_I)
+        image_dataset_II = tf.data.Dataset.from_tensor_slices(self.image_paths).map(self.preprocess_image_II)
+        text_dataset = self.preprocess_text()
         
-        def postprocedure(img, path, signature):
-            img = ((img + 1.0) * 127.5).numpy().astype(np.uint8)
-            img = np.clip(img, 0, 255).astype(np.uint8)
-            Image.fromarray(img).save(f'{path}/{signature}.png')
+        self.vocabulary = len(self.tokenizer) + 1 
+        
+        dataset = tf.data.Dataset.zip((image_dataset_I, image_dataset_II, text_dataset))
+        dataset = dataset.shuffle(buffer_size=max(len(self.df)+1, 1024), reshuffle_each_iteration=True).batch(self.batch_size)
+        return dataset
 
-        for idx, sentence in enumerate(descriptions):
-            inputs = [tokenizer.word_index.get(i, 0) for i in sentence.split(" ")]  
-            inputs = tf.keras.preprocessing.sequence.pad_sequences([inputs], maxlen=gross_range, padding="post")
-            inputs = tf.convert_to_tensor(inputs)
 
-            mu, logvar, _ = CA(inputs)
-            noise = tf.random.normal([1, noise_size])
-            c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
-            c0_ = tf.concat([c0, noise], axis=1)
-            generated_images = G_I(c0_)
-            
-            if stage2:
-                generated_images = G_II([c0_, generated_images])
-            
-            final_image = generated_images[0]
-            nickname = f"GI_{idx + 1}"
-            postprocedure(final_image, subfolder, nickname)
-    except Exception as e:
-        print(f"Error encountered during generating images from the given descriptions: {e}")
+    def validate(self, validate_descriptions, CA, G_I, G_II, noise_size, path, signature, stage2=True):
+        try:
+            subfolder = os.path.join(path, str(signature))
+            os.makedirs(subfolder, exist_ok=True)           
+
+            for idx, sentence in enumerate(validate_descriptions):
+                cluster = [sentence]
+                one_hot, _ = self.preparation_txt(cluster, self.max_len)
+                one_hot = tf.expand_dims(one_hot, axis=0) 
+                mu, logvar, _ = CA(one_hot)
+                noise = tf.random.normal([1, noise_size])
+                c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
+                c0_ = tf.concat([c0, noise], axis=1)
+                generated_images = G_I(c0_)
+                
+                if stage2:
+                    generated_images = G_II([c0_, generated_images])
+                
+                final_image = generated_images[0]
+                nickname = f"GI_{idx + 1}"
+                self.postprocedure(final_image, subfolder, nickname)
+        except Exception as e:
+            print(f"Error encountered during generating images from the given descriptions: {e}")
+
 
 
 
@@ -449,24 +473,30 @@ def main_stage1(latent_dim) :
     images_path = './images'
     noise_size = 200
     learning_rate = 2e-4
-    embedding_dim = 200
-    gru_units = latent_dim
     save_path = './StageI'
+    initial_learning_rate = 0.001
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+        initial_learning_rate,
+        decay_steps=2650,
+        decay_rate=0.96,
+        staircase=True
+    )
     save_interval = 150
 
     with strategy.scope() :
-        dataset, vocab, vocab_size, _  = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
+        load_dataset = DataProcessor(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
+        dataset = load_dataset.preprocedure()
+        optimizer_ = tf.keras.optimizers.RMSprop(learning_rate=lr_schedule)
+        char = CharCnnRnn(optimizer_)
+        char.load_weights('models/CharCNNRnn280')
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
         optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
-        s1 = StageI(latent_dim, cross_entropy, optimizer, vocab_size, embedding_dim, gru_units)
+        s1 = StageI(latent_dim, cross_entropy, optimizer, char)
         s1.compile(optimizer=optimizer, loss=cross_entropy)
 
 
 
     print(f'Number of available GPUs: {strategy.num_replicas_in_sync}')
-
-    def max_length(vectors) :
-        return max(len(vector) for vector in vectors)
 
 
     @tf.function
@@ -497,7 +527,7 @@ def main_stage1(latent_dim) :
             num += 1
             total_g_losses += g_loss
             total_d_losses += d_loss
-            print(f'per_batch_GI_loss:{total_g_losses} per_batch_DI_loss:{total_d_losses} epoch:{epoch + 1} batch_index:{num_+1}')
+            print(f'per_batch_GI_loss:{g_loss} per_batch_DI_loss:{d_loss} epoch:{epoch + 1} batch_index:{num_+1}')
         train_g_loss = total_g_losses / num
         train_d_loss = total_d_losses / num
 
@@ -511,7 +541,7 @@ def main_stage1(latent_dim) :
                 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background',
                 'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background'
             ]
-            generate_images_from_text(sentences_group, s1.ca, s1.generator, None, noise_size, save_path, max_length(vocab), f'N{epoch + 1}', False)
+            load_dataset.validate(sentences_group, s1.ca, s1.generator, None, noise_size, save_path, f'N{epoch + 1}', False)
             s1.ca.save_weights(f'models/CA{epoch + 1}')
             s1.ca.save_weights(f'models/CA_backup')
             s1.generator.save_weights(f'models/G1{epoch + 1}')
@@ -545,7 +575,8 @@ def main_stage2(ca, g1) :
     save_interval = 50
 
     with strategy.scope() :
-        dataset, vocab, vocab_size, _ = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE_2, height, width)
+        load_dataset = DataProcessor(csv_path, images_path, GLOBAL_BATCH_SIZE_2, height, width)
+        dataset = load_dataset.preprocedure()
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
         optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
         s2 = StageII(cross_entropy, optimizer, ca, g1, noise_size)
@@ -588,7 +619,7 @@ def main_stage2(ca, g1) :
             num += 1
             total_g_losses += g_loss
             total_d_losses += d_loss
-            print(f'per_batch_GII_loss:{total_g_losses} per_batch_DII_loss:{total_d_losses} epoch:{epoch + 1} batch_index:{num_+1}')
+            print(f'per_batch_GII_loss:{g_loss} per_batch_DII_loss:{d_loss} epoch:{epoch + 1} batch_index:{num_+1}')
         train_g_loss = total_g_losses / num
         train_d_loss = total_d_losses / num
 
@@ -602,7 +633,7 @@ def main_stage2(ca, g1) :
                 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background',
                 'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background'
             ]
-            generate_images_from_text(sentences_group, s2.ca1, s2.g1, s2.generator, noise_size, save_path, max_length(vocab), f'N{epoch + 1}')
+            load_dataset.validate(sentences_group, s2.ca1, s2.g1, s2.generator, noise_size, save_path, f'N{epoch + 1}')
             s2.generator.save_weights(f'models/G2{epoch + 1}')
             s2.discriminator.save_weights(f'models/D2{epoch + 1}')
 
@@ -617,7 +648,7 @@ def main_stage2(ca, g1) :
 
 
 def main(mode="restart"):
-    latent_dim = 256 
+    latent_dim = 385 
 
     def max_length(vectors) :
         return max(len(vector) for vector in vectors)
@@ -654,6 +685,6 @@ def main(mode="restart"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the main stages of the program.")
     parser.add_argument("mode", type=str, choices=["restart", "recover"],
-                        help="Mode to run the program. 'train' for training mode and 'recover' for recovery mode.")
+                        help="Mode to run the program. 'train' for training mode and 'recover' for recovery mode.", nargs='?', default='restart')
     args = parser.parse_args()
     main(args.mode)
