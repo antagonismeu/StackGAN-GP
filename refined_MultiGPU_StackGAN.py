@@ -587,10 +587,6 @@ def main_stage2(ca, g1) :
     print(f'Number of available GPUs: {strategy.num_replicas_in_sync}')
 
 
-    def max_length(vectors) :
-        return max(len(vector) for vector in vectors)
-
-
     @tf.function
     def train_step_stage2(batch) :
         _, final_target, text = batch
@@ -650,18 +646,20 @@ def main_stage2(ca, g1) :
 def main(mode="restart"):
     latent_dim = 385 
 
-    def max_length(vectors) :
-        return max(len(vector) for vector in vectors)
-
-
 
     def load_state():
         try:
-            csv_path = 'descriptions.csv'
-            images_path = './images' 
-            embedding_dim = 200       
-            _, vocab, _, _  = load_dataset(csv_path, images_path, GLOBAL_BATCH_SIZE_2, height, width)
-            ca = CA(latent_dim, max_length(vocab), embedding_dim, latent_dim)
+            initial_learning_rate = 0.001
+            lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+                initial_learning_rate,
+                decay_steps=2650,
+                decay_rate=0.96,
+                staircase=True
+            )    
+            optimizer = tf.keras.optimizers.RMSprop(learning_rate=lr_schedule)              
+            char = CharCnnRnn(optimizer)
+            char.load_weights('models/CharCNNRnn280')
+            ca = CA(latent_dim, char)
             ca.load_weights('./models/CA_backup')
             g1 = StageI_Generator()
             g1.load_weights('./models/G1_backup')            
