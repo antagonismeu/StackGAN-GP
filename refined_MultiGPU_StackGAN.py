@@ -486,7 +486,12 @@ def main_stage1(latent_dim) :
     with strategy.scope() :
         load_dataset = DataProcessor(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
         dataset = load_dataset.preprocedure()
-        optimizer_ = tf.keras.optimizers.RMSprop(learning_rate=lr_schedule)
+        optimizer_ = tf.keras.optimizers.legacy.RMSprop(learning_rate=lr_schedule)
+        '''
+        Warning:
+        if the previous version is implemented under tf(2.11)(not include 2.11)
+        the restoring line should be modified like this tf.keras.optimizers.legacy.RMSprop
+        '''
         char = CharCnnRnn(optimizer_)
         char.load_weights('models/CharCNNRnn280')
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
@@ -656,7 +661,12 @@ def main(mode="restart"):
                 decay_rate=0.96,
                 staircase=True
             )    
-            optimizer = tf.keras.optimizers.RMSprop(learning_rate=lr_schedule)              
+            optimizer = tf.keras.optimizers.legacy.RMSprop(learning_rate=lr_schedule) 
+            '''
+            Warning:
+            if the previous version is implemented under tf(2.11)(not include 2.11)
+            the restoring line should be modified like this tf.keras.optimizers.legacy.RMSprop
+            '''             
             char = CharCnnRnn(optimizer)
             char.load_weights('models/CharCNNRnn280')
             ca = CA(latent_dim, char)
