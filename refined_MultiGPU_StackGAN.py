@@ -295,12 +295,12 @@ class StageI(tf.keras.Model):
         generated_images = self.generator(c0, training=True)
         real_output = self.discriminator([real_images, embeddings], training=True)
         fake_output = self.discriminator([generated_images, embeddings], training=True)
-        return real_output, fake_output, mu, logvar, generated_images
+        return real_output, fake_output, mu, logvar, generated_images, embeddings
 
     def train_step(self, text_embeddings, real_images, noise_size):
         with tf.GradientTape(persistent=True) as tape:
-            real_output, fake_output, mu, logvar, generated_images = self(text_embeddings, real_images, noise_size)
-            d_loss = self.discriminator_loss(real_output, fake_output, real_images, generated_images, text_embeddings)
+            real_output, fake_output, mu, logvar, generated_images, embeddings = self(text_embeddings, real_images, noise_size)
+            d_loss = self.discriminator_loss(real_output, fake_output, real_images, generated_images, embeddings)
             g_loss = self.generator_loss(fake_output, mu, logvar)
         gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables + self.ca.trainable_variables)
         gradients_of_discriminator = tape.gradient(d_loss, self.discriminator.trainable_variables)
