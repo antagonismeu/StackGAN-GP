@@ -289,7 +289,7 @@ class StageI(tf.keras.Model):
 
     def call(self, text_embeddings, real_images, noise_size):
         noise = tf.random.normal([real_images.shape[0], noise_size])
-        mu, logvar, embeddings = self.ca(text_embeddings)
+        mu, logvar, embeddings = self.ca(text_embeddings, training=True)
         c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
         c0 = tf.concat([c0, noise], axis=1)
         generated_images = self.generator(c0, training=True)
@@ -486,7 +486,7 @@ class DataProcessor:
 
 
 
-def main_stage1(latent_dim) :
+def main_stage1(latent_dim, flag, path) :
     print('''
         -----------------------------
         ---Stage 1 Is Initialized-----  
@@ -524,6 +524,10 @@ def main_stage1(latent_dim) :
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
         optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
         s1 = StageI(latent_dim, cross_entropy, optimizer, char)
+        if flag :
+            s1.generator.load_weight(f'modles/{path[1]}')
+            s1.discriminator.load_weight(f'modles/{path[2]}')
+            s1.ca.load_weight(f'modles/{path[0]}')
         s1.compile(optimizer=optimizer, loss=cross_entropy)
 
 
@@ -589,7 +593,7 @@ def main_stage1(latent_dim) :
     return s1.ca, s1.generator
 
 
-def main_stage2(ca, g1) :
+def main_stage2(ca, g1, flag, path) :
     print('''
         -----------------------------
         ---Stage 2 Is Initialized-----  
@@ -612,6 +616,9 @@ def main_stage2(ca, g1) :
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
         optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
         s2 = StageII(cross_entropy, optimizer, ca, g1, noise_size)
+        if flag :
+            s2.generator.load_weights(f'models/{path[0]}')
+            s2.discriminator.load_weights(f'models/{path[1]}')
         s2.compile(optimizer=optimizer, loss=cross_entropy)
 
 
@@ -675,11 +682,11 @@ def main_stage2(ca, g1) :
 
 
 
-def main(mode="restart"):
+def main(flag1, flag2, path1, path2, mode="restart"):
     latent_dim = 385 
 
 
-    def load_state():
+    def load_state(flag1, path1):
         try:
             initial_learning_rate = 0.001
             lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
@@ -696,10 +703,16 @@ def main(mode="restart"):
             '''             
             char = CharCnnRnn(optimizer)
             char.load_weights('models/CharCNNRnn280')
-            ca = CA(latent_dim, char)
-            ca.load_weights('./models/CA_backup')
-            g1 = StageI_Generator()
-            g1.load_weights('./models/G1_backup')            
+            if not flag1 :
+                ca = CA(latent_dim, char)
+                ca.load_weights('./models/CA_backup')
+                g1 = StageI_Generator()
+                g1.load_weights('./models/G1_backup') 
+            if flag1 :
+                ca = CA(latent_dim, char)
+                ca.load_weights(f'./models/{path1[0]}')
+                g1 = StageI_Generator()
+                g1.load_weights(f'./models/{path1[1]}')                          
             return ca, g1                       
         except Exception as e:
             print(f"Error encountered during reactivating repository: {e}")
@@ -708,11 +721,11 @@ def main(mode="restart"):
 
 
     if mode == 'restart':
-        ca, g1 = main_stage1(latent_dim)
-        main_stage2(ca, g1)
+        ca, g1 = main_stage1(latent_dim, flag1, path1)
+        main_stage2(ca, g1, flag2, path2)
     elif mode == 'recover':
-        ca, g1 = load_state()
-        main_stage2(ca, g1)
+        ca, g1 = load_state(flag1, path1)
+        main_stage2(ca, g1, flag2, path2)
 
 
 
@@ -721,5 +734,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the main stages of the program.")
     parser.add_argument("mode", type=str, choices=["restart", "recover"],
                         help="Mode to run the program. 'train' for training mode and 'recover' for recovery mode.", nargs='?', default='restart')
+    parser.add_argument('--flag1', action='store_true', help='A flag to recover training StageI')
+    parser.add_argument('-path1', type=str, nargs=3, default=None, help='if flag is True, add three arguments CA_path, G1_path, D1_path')
+    parser.add_argument('--flag2', action='store_true', help='A flag to recover training StageII')
+    parser.add_argument('-path2', type=str, nargs=2, default=None, help='if flag is True, add three arguments G2_path, D2_path')
     args = parser.parse_args()
-    main(args.mode)
+    main(args.flag1, args.flag2, args.path1, args.path2, args.mode)
