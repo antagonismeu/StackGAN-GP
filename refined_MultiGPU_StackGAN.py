@@ -250,18 +250,20 @@ class StageII_Discriminator(tf.keras.Model):
 
 
 
+import tensorflow as tf
+
 class StageI(tf.keras.Model):
-    def __init__(self, output_dim, loss_fn, optimizer, char, gp_weight=10.0):
+    def __init__(self, output_dim, optimizer, char, gp_weight=10.0, n_critic=5):
         super(StageI, self).__init__()
         self.generator = StageI_Generator()
         self.discriminator = StageI_Discriminator()
         self.ca = CA(output_dim, char)
-        self.cross_entropy = loss_fn
         self.generator_optimizer = optimizer
         self.discriminator_optimizer = optimizer
         self.gp_weight = gp_weight
-        self.generator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
-        self.discriminator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
+        self.n_critic = n_critic  
+        self.generator.compile(optimizer=self.generator_optimizer, loss=self.generator_loss)
+        self.discriminator.compile(optimizer=self.discriminator_optimizer, loss=self.discriminator_loss)
     
     def gradient_penalty(self, real_images, fake_images, embeddings):
         alpha = tf.random.uniform(shape=[real_images.shape[0], 1, 1, 1], minval=0., maxval=1.)
@@ -277,13 +279,12 @@ class StageI(tf.keras.Model):
         return gradient_penalty
 
     def discriminator_loss(self, real_output, fake_output, real_images, fake_images, embeddings):
-        real_loss = self.cross_entropy(tf.ones_like(real_output), real_output)
-        fake_loss = self.cross_entropy(tf.zeros_like(fake_output), fake_output)
+        real_loss = tf.reduce_mean(fake_output) - tf.reduce_mean(real_output)
         gp = self.gradient_penalty(real_images, fake_images, embeddings)
-        return real_loss + fake_loss + self.gp_weight * gp
+        return real_loss + self.gp_weight * gp
 
     def generator_loss(self, fake_output, mu, logvar):
-        gen_loss = self.cross_entropy(tf.ones_like(fake_output), fake_output)
+        gen_loss = -tf.reduce_mean(fake_output)
         kl_div = -0.5 * tf.reduce_mean(1 + logvar - tf.square(mu) - tf.exp(logvar))
         return gen_loss + kl_div
 
@@ -298,34 +299,36 @@ class StageI(tf.keras.Model):
         return real_output, fake_output, mu, logvar, generated_images, embeddings
 
     def train_step(self, text_embeddings, real_images, noise_size):
+        for _ in range(self.n_critic):
+            with tf.GradientTape(persistent=True) as tape:
+                real_output, fake_output, mu, logvar, generated_images, embeddings = self(text_embeddings, real_images, noise_size)
+                d_loss = self.discriminator_loss(real_output, fake_output, real_images, generated_images, embeddings)
+            gradients_of_discriminator = tape.gradient(d_loss, self.discriminator.trainable_variables)
+            self.discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, self.discriminator.trainable_variables))
+        
         with tf.GradientTape(persistent=True) as tape:
             real_output, fake_output, mu, logvar, generated_images, embeddings = self(text_embeddings, real_images, noise_size)
-            d_loss = self.discriminator_loss(real_output, fake_output, real_images, generated_images, embeddings)
             g_loss = self.generator_loss(fake_output, mu, logvar)
         gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables + self.ca.trainable_variables)
-        gradients_of_discriminator = tape.gradient(d_loss, self.discriminator.trainable_variables)
         self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables + self.ca.trainable_variables))
-        self.discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, self.discriminator.trainable_variables))
         
         return d_loss, g_loss
 
 
-
-
 class StageII(tf.keras.Model):
-    def __init__(self, loss_fn, optimizer, CAI, GI, noise_size, gp_weight=10.0):
+    def __init__(self, optimizer, CAI, GI, noise_size, gp_weight=10.0, n_critic=5):
         super(StageII, self).__init__()
         self.generator = StageII_Generator()
         self.g1 = GI
         self.noise_size = noise_size
         self.ca1 = CAI
         self.discriminator = StageII_Discriminator()
-        self.cross_entropy = loss_fn
         self.generator_optimizer = optimizer
         self.discriminator_optimizer = optimizer
         self.gp_weight = gp_weight
-        self.generator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
-        self.discriminator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
+        self.n_critic = n_critic  
+        self.generator.compile(optimizer=self.generator_optimizer, loss=self.generator_loss)
+        self.discriminator.compile(optimizer=self.discriminator_optimizer, loss=self.discriminator_loss)
     
     def gradient_penalty(self, real_images, fake_images, embeddings):
         alpha = tf.random.uniform(shape=[real_images.shape[0], 1, 1, 1], minval=0., maxval=1.)
@@ -341,17 +344,30 @@ class StageII(tf.keras.Model):
         return gradient_penalty
 
     def discriminator_loss(self, real_output, fake_output, real_images, fake_images, embeddings):
-        real_loss = self.cross_entropy(tf.ones_like(real_output), real_output)
-        fake_loss = self.cross_entropy(tf.zeros_like(fake_output), fake_output)
+        real_loss = tf.reduce_mean(fake_output) - tf.reduce_mean(real_output)
         gp = self.gradient_penalty(real_images, fake_images, embeddings)
-        return real_loss + fake_loss + self.gp_weight * gp
+        return real_loss + self.gp_weight * gp
 
     def generator_loss(self, fake_output, mu, logvar):
-        gen_loss = self.cross_entropy(tf.ones_like(fake_output), fake_output)
+        gen_loss = -tf.reduce_mean(fake_output)
         kl_div = -0.5 * tf.reduce_mean(1 + logvar - tf.square(mu) - tf.exp(logvar))
         return gen_loss + kl_div
 
     def train_step(self, text, real_images):
+        for _ in range(self.n_critic):
+            with tf.GradientTape(persistent=True) as tape:
+                mu, logvar, embeddings = self.ca1(text, training=True)
+                noise = tf.random.normal([BATCH_SIZE_2, self.noise_size])
+                c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
+                c0_ = tf.concat([c0, noise], axis=1)
+                preliminary_images = self.g1(c0_, training=True)
+                generated_images = self.generator([c0_, preliminary_images], training=True)
+                real_output = self.discriminator([real_images, embeddings], training=True)
+                fake_output = self.discriminator([generated_images, embeddings], training=True)
+                d_loss = self.discriminator_loss(real_output, fake_output, real_images, generated_images, embeddings)
+            gradients_of_discriminator = tape.gradient(d_loss, self.discriminator.trainable_variables)
+            self.discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, self.discriminator.trainable_variables))
+        
         with tf.GradientTape(persistent=True) as tape:
             mu, logvar, embeddings = self.ca1(text, training=True)
             noise = tf.random.normal([BATCH_SIZE_2, self.noise_size])
@@ -359,16 +375,13 @@ class StageII(tf.keras.Model):
             c0_ = tf.concat([c0, noise], axis=1)
             preliminary_images = self.g1(c0_, training=True)
             generated_images = self.generator([c0_, preliminary_images], training=True)
-            real_output = self.discriminator([real_images, embeddings], training=True)
             fake_output = self.discriminator([generated_images, embeddings], training=True)
-            d_loss = self.discriminator_loss(real_output, fake_output, real_images, generated_images, embeddings)
             g_loss = self.generator_loss(fake_output, mu, logvar)
         gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables + self.ca1.trainable_variables + self.g1.trainable_variables)
-        gradients_of_discriminator = tape.gradient(d_loss, self.discriminator.trainable_variables)
         self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables + self.ca1.trainable_variables + self.g1.trainable_variables))
-        self.discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, self.discriminator.trainable_variables))
         
         return d_loss, g_loss
+
 
 
 
@@ -521,14 +534,13 @@ def main_stage1(latent_dim, flag, path) :
         '''
         char = CharCnnRnn(optimizer_)
         char.load_weights('models/CharCNNRnn280')
-        cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
         optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
-        s1 = StageI(latent_dim, cross_entropy, optimizer, char)
+        s1 = StageI(latent_dim, optimizer, char)
         if flag :
             s1.generator.load_weight(f'modles/{path[1]}')
             s1.discriminator.load_weight(f'modles/{path[2]}')
             s1.ca.load_weight(f'modles/{path[0]}')
-        s1.compile(optimizer=optimizer, loss=cross_entropy)
+        s1.compile(optimizer=optimizer)
 
 
 
@@ -613,13 +625,12 @@ def main_stage2(ca, g1, flag, path) :
     with strategy.scope() :
         load_dataset = DataProcessor(csv_path, images_path, GLOBAL_BATCH_SIZE_2, height, width)
         dataset = load_dataset.preprocedure()
-        cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
         optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
-        s2 = StageII(cross_entropy, optimizer, ca, g1, noise_size)
+        s2 = StageII(optimizer, ca, g1, noise_size)
         if flag :
             s2.generator.load_weights(f'models/{path[0]}')
             s2.discriminator.load_weights(f'models/{path[1]}')
-        s2.compile(optimizer=optimizer, loss=cross_entropy)
+        s2.compile(optimizer=optimizer)
 
 
 
