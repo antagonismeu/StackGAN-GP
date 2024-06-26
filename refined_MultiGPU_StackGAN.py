@@ -18,7 +18,9 @@ except Exception as e:
         os.system(f'pip3 install {item}')
         print('Done!')
 
-
+'''
+technological upgrade: StackGAN-GP
+'''
 
 gpu_devices = tf.config.experimental.list_physical_devices('GPU')
 if gpu_devices:
@@ -73,12 +75,33 @@ class CA(tf.keras.Model):
         super(CA, self).__init__()
         self.Char = char
         self.fc = layers.Dense(output_dim * 2)
+        self.leaky_relu = layers.LeakyRelu(alpha=0.2)
 
     def call(self, x):
         x_ = self.Char(x, training=False)
         y = self.fc(x_)
+        y = self.leaky_relu(y)
         mean, logvar = tf.split(y, num_or_size_splits=2, axis=1)
         return mean, logvar, x_
+
+
+ 
+    
+class CA2(tf.keras.Model):
+    def __init__(self, output_dim, char):
+        super(CA, self).__init__()
+        self.Char = char
+        self.fc = layers.Dense(output_dim * 2)
+        self.leaky_relu = layers.LeakyRelu(alpha=0.2)
+
+    def call(self, x):
+        x_ = self.Char(x, training=False)
+        y = self.fc(x_)
+        y = self.leaky_relu(y)
+        mean, logvar = tf.split(y, num_or_size_splits=2, axis=1)
+        return mean, logvar, x_
+
+
 
 
 class ResidualBlock(tf.keras.Model):
@@ -103,111 +126,193 @@ class ResidualBlock(tf.keras.Model):
 class StageI_Generator(tf.keras.Model):
     def __init__(self):
         super(StageI_Generator, self).__init__()
-        self.fc = layers.Dense(4 * 4 * 64 * 8)
-        self.upsample1 = layers.Conv2DTranspose(64 * 4, 4, strides=2, padding='same')
+        self.fc1 = layers.Dense(128 * 8 * 4 * 4,use_bias=False)
+        self.activation = layers.ReLU()
+        
+        self.upsampling1 = layers.UpSampling2D(size=(2,2))
+        self.conv1 = layers.Conv2D(512,kernel_size=3,strides=1,padding='same',use_bias=False)
         self.bn1 = layers.BatchNormalization()
-        self.relu = layers.ReLU()
-        self.upsample2 = layers.Conv2DTranspose(64 * 2, 4, strides=2, padding='same')
+        self.ac1 = layers.ReLU()
+        
+        self.upsampling2 = layers.UpSampling2D(size=(2,2))
+        self.conv2 = layers.Conv2D(256,kernel_size=3,strides=1,padding='same',use_bias=False)
         self.bn2 = layers.BatchNormalization()
-        self.upsample3 = layers.Conv2DTranspose(64, 4, strides=2, padding='same')
-        self.bn3 = layers.BatchNormalization()
-        self.upsample4 = layers.Conv2DTranspose(3, 4, strides=2, padding='same')
-        self.tanh = layers.Activation('tanh')
+        self.ac2 = layers.ReLU()
 
+        self.upsampling3 = layers.UpSampling2D(size=(2,2))
+        self.conv3 = layers.Conv2D(128,kernel_size=3,strides=1,padding='same',use_bias=False)
+        self.bn3 = layers.BatchNormalization()
+        self.ac3 = layers.ReLU()
+
+        self.upsampling4 = layers.UpSampling2D(size=(2,2))
+        self.conv4 = layers.Conv2D(64,kernel_size=3,strides=1,padding='same',use_bias=False)
+        self.bn4 = layers.BatchNormalization()
+        self.ac4 = layers.ReLU()
+
+        self.conv5 = layers.Conv2D(3,kernel_size=3,strides=1,padding='same',use_bias=False)
+        self.tanh = layers.Activation('tanh')
     def call(self, z):
-        z = self.fc(z)
-        z = tf.reshape(z, (-1, 4, 4, 64 * 8))
-        z = self.upsample1(z)
+        z = self.fc1(z)
+        z = self.activation(z)
+        z = tf.reshape(z, (-1, 4, 4, 128 * 8))
+        z = self.upsampling1(z)
+        z = self.conv1(z)
         z = self.bn1(z)
-        z = self.relu(z)
-        z = self.upsample2(z)
+        z = self.ac1(z)
+        z = self.upsampling2(z)
+        z = self.conv2(z)
         z = self.bn2(z)
-        z = self.relu(z)
-        z = self.upsample3(z)
+        z = self.ac2(z)
+        z = self.upsampling3(z)
+        z = self.conv3(z)
         z = self.bn3(z)
-        z = self.relu(z)
-        z = self.upsample4(z)
+        z = self.ac3(z)
+        z = self.upsampling4(z)
+        z = self.conv4(z)
+        z = self.bn4(z)
+        z = self.ac4(z)
+        z = self.conv5(z)
         return self.tanh(z)
 
 
 class StageI_Discriminator(tf.keras.Model):
     def __init__(self):
         super(StageI_Discriminator, self).__init__()
-        self.conv1 = layers.Conv2D(64, 4, strides=2, padding='same')
-        self.lrelu = layers.LeakyReLU(0.2)
-        self.conv2 = layers.Conv2D(128, 4, strides=2, padding='same')
+        self.reshape = layers.Reshape((1, 1, 385)) #embedding_dim = 385
+        self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 64, HEIGHT // 64, 1]))
+        
+        self.conv1 = layers.Conv2D(64,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
+        self.ac1 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv2 = layers.Conv2D(128,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
         self.bn1 = layers.BatchNormalization()
-        self.conv3 = layers.Conv2D(256, 4, strides=2, padding='same')
+        self.ac2 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv3 = layers.Conv2D(256,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
         self.bn2 = layers.BatchNormalization()
-        self.conv4 = layers.Conv2D(512, 4, strides=2, padding='same')
+        self.ac3 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv4 = layers.Conv2D(512,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
         self.bn3 = layers.BatchNormalization()
+        self.ac4 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv5 = layers.Conv2D(512,kernel_size=1,padding='same',strides=1)
+        self.bn4 = layers.BatchNormalization()
+        self.ac5 = layers.LeakyReLU(alpha=0.2)
+
+        self.concat = layers.Concatenate(axis=-1)
         self.flatten = layers.Flatten()
-        self.concat = layers.Concatenate()
-        self.final_dense = layers.Dense(1)
-        self.aux_dense = layers.Dense(512, activation='relu')
+        self.fc = layers.Dense(1, activation='sigmoid')
 
     def call(self, inputs):
         img, aux_input = inputs
         x = self.conv1(img)
-        x = self.lrelu(x)
+        x = self.ac1(x)
         x = self.conv2(x)
         x = self.bn1(x)
-        x = self.lrelu(x)
+        x = self.ac2(x)
         x = self.conv3(x)
         x = self.bn2(x)
-        x = self.lrelu(x)
+        x = self.ac3(x)
         x = self.conv4(x)
         x = self.bn3(x)
-        x = self.lrelu(x)
-        x = self.flatten(x)
-        aux = self.aux_dense(aux_input)
+        x = self.ac4(x)
+        aux = self.reshape(aux_input)
+        aux = self.tile(x)
         x = self.concat([x, aux])
-        x = self.final_dense(x)        
-        return tf.nn.sigmoid(x)
+        x = self.conv5(x)
+        x = self.bn4(x)
+        x= self.ac5(x)
+        x = self.flatten(x)
+        x = self.fc(x)        
+        return x
 
 
 class StageII_Generator(tf.keras.Model):
     def __init__(self):
         super(StageII_Generator, self).__init__()
-        self.conv1 = layers.Conv2DTranspose(64, 4, strides=2, padding='same')
-        self.lrelu = layers.LeakyReLU(0.2)
-        self.conv2 = layers.Conv2DTranspose(128, 4, strides=2, padding='same')
+        self.reshape = layers.Reshape((1, 1, 385)) #embedding_dim = 385
+        self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 16, HEIGHT // 16, 1]))                                                      
+        self.conv1 = layers.Conv2D(128,kernel_size=(3,3),strides=1,padding='same',use_bias=False)
+        self.ac1 = layers.ReLU()
+        self.concat = layers.Concatenate(axis=-1)
+        self.conv2 = layers.Conv2D(256,kernel_size=(4,4),strides=2,padding='same',use_bias=False)
         self.bn1 = layers.BatchNormalization()
-        self.resblock1 = ResidualBlock(128)
-        self.resblock2 = ResidualBlock(128)
-        self.resblock3 = ResidualBlock(128)
-        self.resblock4 = ResidualBlock(128)
-        self.deconv1 = layers.Conv2DTranspose(64, 4, strides=1, padding='same')
+        self.ac2 = layers.ReLU()
+        self.conv3 = layers.Conv2D(512,kernel_size=(4,4),strides=2,padding='same',use_bias=False)
         self.bn2 = layers.BatchNormalization()
-        self.relu = layers.ReLU()
-        self.deconv2 = layers.Conv2DTranspose(3, 4, strides=1, padding='same')
+        self.ac3 = layers.ReLU()
+
+        self.conv4 = layers.Conv2D(512,kernel_size=(3,3),strides=1,padding='same',use_bias=False)
+        self.bn3 = layers.BatchNormalization()
+        self.ac4 = layers.ReLU()
+
+        self.rb1 = ResidualBlock(512)
+        self.rb2 = ResidualBlock(512)
+        self.rb3 = ResidualBlock(512)
+        self.rb4 = ResidualBlock(512)
+        
+        self.upsampling1 = layers.UpSampling2D(size=(2,2))
+        self.conv5 = layers.Conv2D(512,kernel_size=3,strides=1,padding='same',use_bias=False)
+        self.bn4 = layers.BatchNormalization()
+        self.ac5 = layers.ReLU()
+
+        self.upsampling2 = layers.UpSampling2D(size=(2,2))
+        self.conv6 = layers.Conv2D(256,kernel_size=3,strides=1,padding='same',use_bias=False)
+        self.bn5 = layers.BatchNormalization()
+        self.ac6 = layers.ReLU()
+
+        self.upsampling3 = layers.UpSampling2D(size=(2,2))
+        self.conv7 = layers.Conv2D(128,kernel_size=3,strides=1,padding='same',use_bias=False)
+        self.bn6 = layers.BatchNormalization()
+        self.ac7 = layers.ReLU()
+
+        self.upsampling4 = layers.UpSampling2D(size=(2,2))
+        self.conv8 = layers.Conv2D(64,kernel_size=3,strides=1,padding='same',use_bias=False)
+        self.bn7 = layers.BatchNormalization()
+        self.ac8 = layers.ReLU()
+
+        self.conv9 = layers.Conv2D(3,kernel_size=3,strides=1,padding='same',use_bias=False)
         self.tanh = layers.Activation('tanh')
         
-    def spatial_replication(self, c, height, width):
-        c = tf.expand_dims(tf.expand_dims(c, 1), 1)
-        c = tf.tile(c, [1, height, width, 1])
-        return c
 
     def call(self, inputs):
         c, img = inputs
-        
-        c = self.spatial_replication(c, img.shape[1], img.shape[2])
-        
-        x = tf.concat([img, c], axis=-1)
-        
-        x = self.conv1(x)
-        x = self.lrelu(x)
-        x = self.conv2(x)
-        x = self.bn1(x)
-        x = self.lrelu(x)
-        x = self.resblock1(x)
-        x = self.resblock2(x)
-        x = self.resblock3(x)
-        x = self.resblock4(x)
-        x = self.deconv1(x)
-        x = self.bn2(x)
-        x = self.relu(x)
-        x = self.deconv2(x)
+        img = self.conv1(img)
+        img = self.ac1(img)
+        img = self.conv2(img)
+        img = self.bn1(img)
+        img = self.ac2(img)
+        img = self.conv3(img)
+        img = self.bn2(img)
+        img = self.ac3(img)
+        c = self.reshape(c)
+        c = self.tile(c)
+        x = self.concat([c, img])
+        x = self.conv4(x)
+        x = self.bn3(x)
+        x = self.ac4(x)
+        x = self.rb1(x)
+        x = self.rb2(x)
+        x = self.rb3(x)
+        x = self.rb4(x)
+        x = self.upsampling1(x)
+        x = self.conv5(x)
+        x = self.bn4(x)
+        x = self.ac5(x)
+        x = self.upsampling2(x)
+        x = self.conv6(x)
+        x = self.bn5(x)
+        x = self.ac6(x)
+        x = self.upsampling3(x)
+        x = self.conv7(x)
+        x = self.bn6(x)
+        x = self.ac7(x)
+        x = self.upsampling4(x)
+        x = self.conv8(x)
+        x = self.bn7(x)
+        x = self.ac8(x) 
+        x = self.conv9(x)                       
         return self.tanh(x)
 
 
@@ -215,38 +320,104 @@ class StageII_Generator(tf.keras.Model):
 class StageII_Discriminator(tf.keras.Model):
     def __init__(self):
         super(StageII_Discriminator, self).__init__()
-        self.conv1 = layers.Conv2D(64, 4, strides=2, padding='same')
-        self.lrelu = layers.LeakyReLU(0.2)
-        self.conv2 = layers.Conv2D(128, 4, strides=2, padding='same')
+        self.reshape = layers.Reshape((1, 1, 385)) #embedding_dim = 385
+        self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 64, HEIGHT // 64, 1]))
+
+        self.conv1 = layers.Conv2D(64,kernel_size=(4,4),strides=2,padding='same',use_bias=False)
+        self.ac1 = layers.LeakyReLU(alpha=0.2)
+        
+        self.conv2 = layers.Conv2D(128,kernel_size=(4,4),strides=2,padding='same',use_bias=False)
         self.bn1 = layers.BatchNormalization()
-        self.conv3 = layers.Conv2D(256, 4, strides=2, padding='same')
+        self.ac2 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv3 = layers.Conv2D(256,kernel_size=(4,4),strides=2,padding='same',use_bias=False)
         self.bn2 = layers.BatchNormalization()
-        self.conv4 = layers.Conv2D(512, 4, strides=2, padding='same')
+        self.ac3 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv4 = layers.Conv2D(512,kernel_size=(4,4),strides=2,padding='same',use_bias=False)
         self.bn3 = layers.BatchNormalization()
+        self.ac4 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv5 = layers.Conv2D(1024,kernel_size=(4,4),strides=2,padding='same',use_bias=False)
+        self.bn4 = layers.BatchNormalization()
+        self.ac5 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv6 = layers.Conv2D(2048,kernel_size=(4,4),strides=2,padding='same',use_bias=False)
+        self.bn5 = layers.BatchNormalization()
+        self.ac6 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv7 = layers.Conv2D(1024,kernel_size=(1,1),strides=1,padding='same',use_bias=False)
+        self.bn6 = layers.BatchNormalization()
+        self.ac7 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv8 = layers.Conv2D(512,kernel_size=(1,1),strides=1,padding='same',use_bias=False)
+        self.bn7 = layers.BatchNormalization()
+
+        self.conv9 = layers.Conv2D(128,kernel_size=(1,1),strides=1,padding='same',use_bias=False)
+        self.bn8 = layers.BatchNormalization()
+        self.ac8 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv10 = layers.Conv2D(128,kernel_size=(3,3),strides=1,padding='same',use_bias=False)
+        self.bn9 = layers.BatchNormalization()
+        self.ac9 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv11 = layers.Conv2D(512,kernel_size=(3,3),strides=1,padding='same',use_bias=False)
+        self.bn10 = layers.BatchNormalization()
+
+        self.ac10 = layers.LeakyReLU(alpha=0.2)
+
+        self.add = layers.Add()
+        self.conv12 = layers.Conv2D(64*8,kernel_size=1,strides=1,padding='same')
+        self.bn11 = layers.BatchNormalization()
+        self.ac11 = layers.LeakyReLU(alpha=0.2)
         self.flatten = layers.Flatten()
-        self.concat = layers.Concatenate()
-        self.final_dense = layers.Dense(1)
-        self.aux_dense = layers.Dense(512, activation='relu')
+        self.concat = layers.Concatenate(axis=-1)
+        self.fc = layers.Dense(1, activation='sigmoid')
+
 
     def call(self, inputs):
         img, aux_input = inputs
-        x = self.conv1(img)
-        x = self.lrelu(x)
-        x = self.conv2(x)
-        x = self.bn1(x)
-        x = self.lrelu(x)
-        x = self.conv3(x)
-        x = self.bn2(x)
-        x = self.lrelu(x)
-        x = self.conv4(x)
-        x = self.bn3(x)
-        x = self.lrelu(x)
-        x = self.flatten(x)
-        aux = self.aux_dense(aux_input)
-        x = self.concat([x, aux])
-        x = self.final_dense(x)
-        
-        return tf.nn.sigmoid(x)
+        img = self.conv1(img)
+        img = self.ac1(img)
+        img = self.conv2(img)
+        img = self.bn1(img)
+        img = self.ac2(img)
+        img = self.conv3(img)
+        img = self.bn2(img)
+        img = self.ac3(img)
+        img = self.conv4(img)
+        img = self.bn3(img)
+        img = self.ac4(img)
+        img = self.conv5(img)
+        img = self.bn4(img)
+        img = self.ac5(img)
+        img = self.conv6(img)
+        img = self.bn5(img)
+        img = self.ac6(img)
+        img = self.conv7(img)
+        img = self.bn6(img)
+        img = self.ac7(img)  
+        img = self.conv8(img)
+        img = self.bn7(img)
+        img_ = self.conv9(img)
+        img_ = self.bn8(img_)
+        img_ = self.ac8(img_)
+        img_ = self.conv10(img_)
+        img_ = self.bn9(img_)
+        img_ = self.ac9(img_)
+        img_ = self.conv11(img_)
+        img_ = self.bn10(img_)
+        x = self.add([img, img_])  
+        x = self.ac10(x)
+        aux = self.reshape(aux_input)
+        aux = self.tile(aux)
+        z = self.concat([x, aux]) 
+        z = self.conv12(z)
+        z = self.bn11(z)
+        z = self.ac11(z)  
+        z = self.flatten(z)
+        z = self.fc(z)                                                   
+        return z
 
 
 
@@ -289,13 +460,13 @@ class StageI(tf.keras.Model):
 
     def call(self, text_embeddings, real_images, noise_size):
         noise = tf.random.normal([real_images.shape[0], noise_size])
-        mu, logvar, embeddings = self.ca(text_embeddings, training=True)
+        mu, logvar, _ = self.ca(text_embeddings, training=True)
         c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
-        c0 = tf.concat([c0, noise], axis=1)
-        generated_images = self.generator(c0, training=True)
-        real_output = self.discriminator([real_images, embeddings], training=True)
-        fake_output = self.discriminator([generated_images, embeddings], training=True)
-        return real_output, fake_output, mu, logvar, generated_images, embeddings
+        c0_ = tf.concat([c0, noise], axis=1)
+        generated_images = self.generator(c0_, training=True)
+        real_output = self.discriminator([real_images, c0], training=True)
+        fake_output = self.discriminator([generated_images, c0], training=True)
+        return real_output, fake_output, mu, logvar, generated_images, c0
 
     def train_step(self, text_embeddings, real_images, noise_size):
         with tf.GradientTape(persistent=True) as tape:
@@ -313,12 +484,12 @@ class StageI(tf.keras.Model):
 
 
 class StageII(tf.keras.Model):
-    def __init__(self, loss_fn, optimizer, CAI, GI, noise_size, gp_weight=10.0):
+    def __init__(self, output_dim, loss_fn, optimizer, char, GI, noise_size, gp_weight=10.0):
         super(StageII, self).__init__()
         self.generator = StageII_Generator()
         self.g1 = GI
         self.noise_size = noise_size
-        self.ca1 = CAI
+        self.ca1 = CA2(output_dim, char)
         self.discriminator = StageII_Discriminator()
         self.cross_entropy = loss_fn
         self.generator_optimizer = optimizer
@@ -353,15 +524,13 @@ class StageII(tf.keras.Model):
 
     def train_step(self, text, real_images):
         with tf.GradientTape(persistent=True) as tape:
-            mu, logvar, embeddings = self.ca1(text, training=True)
-            noise = tf.random.normal([BATCH_SIZE_2, self.noise_size])
+            mu, logvar, _ = self.ca1(text, training=True)
             c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
-            c0_ = tf.concat([c0, noise], axis=1)
-            preliminary_images = self.g1(c0_, training=True)
-            generated_images = self.generator([c0_, preliminary_images], training=True)
-            real_output = self.discriminator([real_images, embeddings], training=True)
-            fake_output = self.discriminator([generated_images, embeddings], training=True)
-            d_loss = self.discriminator_loss(real_output, fake_output, real_images, generated_images, embeddings)
+            preliminary_images = self.g1(c0, training=True)
+            generated_images = self.generator([c0, preliminary_images], training=True)
+            real_output = self.discriminator([real_images, c0], training=True)
+            fake_output = self.discriminator([generated_images, c0], training=True)
+            d_loss = self.discriminator_loss(real_output, fake_output, real_images, generated_images, c0)
             g_loss = self.generator_loss(fake_output, mu, logvar)
         gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables + self.ca1.trainable_variables + self.g1.trainable_variables)
         gradients_of_discriminator = tape.gradient(d_loss, self.discriminator.trainable_variables)
@@ -456,7 +625,7 @@ class DataProcessor:
         return dataset
 
 
-    def validate(self, validate_descriptions, CA, G_I, G_II, noise_size, path, signature, stage2=True):
+    def validate(self, validate_descriptions, CA, CA2, G_I, G_II, noise_size, path, signature, stage2=True):
         try:
             subfolder = os.path.join(path, str(signature))
             os.makedirs(subfolder, exist_ok=True)           
@@ -472,7 +641,9 @@ class DataProcessor:
                 generated_images = G_I(c0_)
                 
                 if stage2:
-                    generated_images = G_II([c0_, generated_images])
+                    mu, logvar, _ = CA2(one_hot)
+                    c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
+                    generated_images = G_II([c0, generated_images])
                 
                 final_image = generated_images[0]
                 nickname = f"GI_{idx + 1}"
@@ -577,7 +748,7 @@ def main_stage1(latent_dim, flag, path) :
                 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background',
                 'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background'
             ]
-            load_dataset.validate(sentences_group, s1.ca, s1.generator, None, noise_size, save_path, f'N{epoch + 1}', False)
+            load_dataset.validate(sentences_group, s1.ca, None, s1.generator, None, noise_size, save_path, f'N{epoch + 1}', False)
             s1.ca.save_weights(f'models/CA{epoch + 1}')
             s1.ca.save_weights(f'models/CA_backup')
             s1.generator.save_weights(f'models/G1{epoch + 1}')
@@ -593,7 +764,7 @@ def main_stage1(latent_dim, flag, path) :
     return s1.ca, s1.generator
 
 
-def main_stage2(ca, g1, flag, path) :
+def main_stage2(latent_dim, ca, g1, flag, path) :
     print('''
         -----------------------------
         ---Stage 2 Is Initialized-----  
@@ -608,14 +779,29 @@ def main_stage2(ca, g1, flag, path) :
     noise_size = 200
     learning_rate = 2e-4
     save_path = './samples'
+    initial_learning_rate = 0.001
+    lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
+        initial_learning_rate,
+        decay_steps=2650,
+        decay_rate=0.96,
+        staircase=True
+    )    
     save_interval = 50
 
     with strategy.scope() :
+        optimizer_ = tf.keras.optimizers.legacy.RMSprop(learning_rate=lr_schedule)
+        '''
+        Warning:
+        if the previous version is implemented under tf(2.11)(not include 2.11)
+        the restoring line should be modified like this tf.keras.optimizers.legacy.RMSprop
+        '''
+        char = CharCnnRnn(optimizer_)
+        char.load_weights('models/CharCNNRnn280')        
         load_dataset = DataProcessor(csv_path, images_path, GLOBAL_BATCH_SIZE_2, height, width)
         dataset = load_dataset.preprocedure()
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
         optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
-        s2 = StageII(cross_entropy, optimizer, ca, g1, noise_size)
+        s2 = StageII(latent_dim, cross_entropy, optimizer, char, g1, noise_size)
         if flag :
             s2.generator.load_weights(f'models/{path[0]}')
             s2.discriminator.load_weights(f'models/{path[1]}')
@@ -668,8 +854,9 @@ def main_stage2(ca, g1, flag, path) :
                 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background',
                 'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background'
             ]
-            load_dataset.validate(sentences_group, s2.ca1, s2.g1, s2.generator, noise_size, save_path, f'N{epoch + 1}')
+            load_dataset.validate(sentences_group, ca, s2.ca1, s2.g1, s2.generator, noise_size, save_path, f'N{epoch + 1}')
             s2.generator.save_weights(f'models/G2{epoch + 1}')
+            s2.ca1.save_weights(f'models/CA2{epoch + 1}')
             s2.discriminator.save_weights(f'models/D2{epoch + 1}')
 
     print('''
@@ -722,10 +909,10 @@ def main(flag1, flag2, path1, path2, mode="restart"):
 
     if mode == 'restart':
         ca, g1 = main_stage1(latent_dim, flag1, path1)
-        main_stage2(ca, g1, flag2, path2)
+        main_stage2(latent_dim, ca, g1, flag2, path2)
     elif mode == 'recover':
         ca, g1 = load_state(flag1, path1)
-        main_stage2(ca, g1, flag2, path2)
+        main_stage2(latent_dim, ca, g1, flag2, path2)
 
 
 
