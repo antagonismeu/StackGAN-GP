@@ -75,7 +75,7 @@ class CA(tf.keras.Model):
         super(CA, self).__init__()
         self.Char = char
         self.fc = layers.Dense(output_dim * 2)
-        self.leaky_relu = layers.LeakyRelu(alpha=0.2)
+        self.leaky_relu = layers.LeakyReLU(alpha=0.2)
 
     def call(self, x):
         x_ = self.Char(x, training=False)
@@ -85,14 +85,14 @@ class CA(tf.keras.Model):
         return mean, logvar, x_
 
 
- 
-    
+
+
 class CA2(tf.keras.Model):
     def __init__(self, output_dim, char):
         super(CA, self).__init__()
         self.Char = char
         self.fc = layers.Dense(output_dim * 2)
-        self.leaky_relu = layers.LeakyRelu(alpha=0.2)
+        self.leaky_relu = layers.LeakyReLU(alpha=0.2)
 
     def call(self, x):
         x_ = self.Char(x, training=False)
@@ -218,7 +218,7 @@ class StageI_Discriminator(tf.keras.Model):
         x = self.bn3(x)
         x = self.ac4(x)
         aux = self.reshape(aux_input)
-        aux = self.tile(x)
+        aux = self.tile(aux)
         x = self.concat([x, aux])
         x = self.conv5(x)
         x = self.bn4(x)
