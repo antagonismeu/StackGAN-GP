@@ -36,7 +36,7 @@ width, height = 256, 256
 assert width >= 128; height >= 128                                  #INFERIOR BOUNDARY : width, height = 128, 128  
 WIDTH , HEIGHT = width, height
 BATCH_SIZE = 64  
-BATCH_SIZE_2 = 16
+BATCH_SIZE_2 = 32
 '''
 Note: the relationship between GPUs and SIZE is complicated, 
 meaning that larger size will guarantee the lower storing usage of GPUS, 
@@ -89,7 +89,7 @@ class CA(tf.keras.Model):
 
 class CA2(tf.keras.Model):
     def __init__(self, output_dim, char):
-        super(CA, self).__init__()
+        super(CA2, self).__init__()
         self.Char = char
         self.fc = layers.Dense(output_dim * 2)
         self.leaky_relu = layers.LeakyReLU(alpha=0.2)
@@ -231,7 +231,7 @@ class StageI_Discriminator(tf.keras.Model):
 class StageII_Generator(tf.keras.Model):
     def __init__(self):
         super(StageII_Generator, self).__init__()
-        self.reshape = layers.Reshape((1, 1, 385)) #embedding_dim = 385
+        self.reshape = layers.Reshape((1, 1, 770)) #embedding_dim_2 = 770
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 16, HEIGHT // 16, 1]))                                                      
         self.conv1 = layers.Conv2D(128,kernel_size=(3,3),strides=1,padding='same',use_bias=False)
         self.ac1 = layers.ReLU()
@@ -320,7 +320,7 @@ class StageII_Generator(tf.keras.Model):
 class StageII_Discriminator(tf.keras.Model):
     def __init__(self):
         super(StageII_Discriminator, self).__init__()
-        self.reshape = layers.Reshape((1, 1, 385)) #embedding_dim = 385
+        self.reshape = layers.Reshape((1, 1, 770)) #embedding_dim_2 = 770
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 64, HEIGHT // 64, 1]))
 
         self.conv1 = layers.Conv2D(64,kernel_size=(4,4),strides=2,padding='same',use_bias=False)
@@ -484,10 +484,11 @@ class StageI(tf.keras.Model):
 
 
 class StageII(tf.keras.Model):
-    def __init__(self, output_dim, loss_fn, optimizer, char, GI, noise_size, gp_weight=10.0):
+    def __init__(self, output_dim, loss_fn, optimizer, char, GI, legacy_ca, noise_size, gp_weight=10.0):
         super(StageII, self).__init__()
         self.generator = StageII_Generator()
         self.g1 = GI
+        self.ca0 = legacy_ca
         self.noise_size = noise_size
         self.ca1 = CA2(output_dim, char)
         self.discriminator = StageII_Discriminator()
@@ -512,21 +513,25 @@ class StageII(tf.keras.Model):
         return gradient_penalty
 
     def discriminator_loss(self, real_output, fake_output, real_images, fake_images, embeddings):
-        real_loss = self.cross_entropy(tf.ones_like(real_output), real_output)
-        fake_loss = self.cross_entropy(tf.zeros_like(fake_output), fake_output)
+        real_loss = self.cross_entropy(tf.ones_like(real_output) * 0.95, real_output)
+        fake_loss = self.cross_entropy(tf.ones_like(fake_output) * 0.05, fake_output)
         gp = self.gradient_penalty(real_images, fake_images, embeddings)
         return real_loss + fake_loss + self.gp_weight * gp
 
     def generator_loss(self, fake_output, mu, logvar):
-        gen_loss = self.cross_entropy(tf.ones_like(fake_output), fake_output)
+        gen_loss = self.cross_entropy(tf.ones_like(fake_output) * 0.95, fake_output)
         kl_div = -0.5 * tf.reduce_mean(1 + logvar - tf.square(mu) - tf.exp(logvar))
         return gen_loss + kl_div
 
     def train_step(self, text, real_images):
         with tf.GradientTape(persistent=True) as tape:
+            noise = tf.random.normal([real_images.shape[0], self.noise_size])
             mu, logvar, _ = self.ca1(text, training=True)
+            mu0, logvar0, _ = self.ca0(text, training=False)
             c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
-            preliminary_images = self.g1(c0, training=True)
+            pre_c0 = mu0 + tf.exp(logvar0 * 0.5) * tf.random.normal(shape=mu0.shape)
+            c0_ = tf.concat([pre_c0, noise], axis=1)
+            preliminary_images = self.g1(c0_, training=False)
             generated_images = self.generator([c0, preliminary_images], training=True)
             real_output = self.discriminator([real_images, c0], training=True)
             fake_output = self.discriminator([generated_images, c0], training=True)
@@ -679,7 +684,7 @@ def main_stage1(latent_dim, flag, path) :
         decay_rate=0.96,
         staircase=True
     )
-    save_interval = 150
+    save_interval = 50
 
     with strategy.scope() :
         load_dataset = DataProcessor(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
@@ -786,7 +791,7 @@ def main_stage2(latent_dim, ca, g1, flag, path) :
         decay_rate=0.96,
         staircase=True
     )    
-    save_interval = 50
+    save_interval = 30
 
     with strategy.scope() :
         optimizer_ = tf.keras.optimizers.legacy.RMSprop(learning_rate=lr_schedule)
@@ -801,7 +806,7 @@ def main_stage2(latent_dim, ca, g1, flag, path) :
         dataset = load_dataset.preprocedure()
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
         optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
-        s2 = StageII(latent_dim, cross_entropy, optimizer, char, g1, noise_size)
+        s2 = StageII(latent_dim, cross_entropy, optimizer, char, g1, ca ,noise_size)
         if flag :
             s2.generator.load_weights(f'models/{path[0]}')
             s2.discriminator.load_weights(f'models/{path[1]}')
@@ -871,6 +876,7 @@ def main_stage2(latent_dim, ca, g1, flag, path) :
 
 def main(flag1, flag2, path1, path2, mode="restart"):
     latent_dim = 385 
+    latent_dim_2 = 770
 
 
     def load_state(flag1, path1):
@@ -909,10 +915,10 @@ def main(flag1, flag2, path1, path2, mode="restart"):
 
     if mode == 'restart':
         ca, g1 = main_stage1(latent_dim, flag1, path1)
-        main_stage2(latent_dim, ca, g1, flag2, path2)
+        main_stage2(latent_dim_2, ca, g1, flag2, path2)
     elif mode == 'recover':
         ca, g1 = load_state(flag1, path1)
-        main_stage2(latent_dim, ca, g1, flag2, path2)
+        main_stage2(latent_dim_2, ca, g1, flag2, path2)
 
 
 
