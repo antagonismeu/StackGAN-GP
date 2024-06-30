@@ -33,7 +33,7 @@ if gpu_devices:
 global WIDTH, HEIGHT, CHANNEL
 strategy = tf.distribute.MirroredStrategy()
 width, height = 256, 256
-assert width >= 128; height >= 128                                  #INFERIOR BOUNDARY : width, height = 128, 128  
+assert width >= 128; height >= 128                                  # INFERIOR BOUNDARY : width, height = 128, 128  
 WIDTH , HEIGHT = width, height
 BATCH_SIZE = 64  
 BATCH_SIZE_2 = 32
@@ -178,7 +178,7 @@ class StageI_Generator(tf.keras.Model):
 class StageI_Discriminator(tf.keras.Model):
     def __init__(self):
         super(StageI_Discriminator, self).__init__()
-        self.reshape = layers.Reshape((1, 1, 385)) #embedding_dim = 385
+        self.reshape = layers.Reshape((1, 1, 385))                            # embedding_dim = 385
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 64, HEIGHT // 64, 1]))
         
         self.conv1 = layers.Conv2D(64,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
@@ -231,7 +231,7 @@ class StageI_Discriminator(tf.keras.Model):
 class StageII_Generator(tf.keras.Model):
     def __init__(self):
         super(StageII_Generator, self).__init__()
-        self.reshape = layers.Reshape((1, 1, 770))
+        self.reshape = layers.Reshape((1, 1, 770))                                   # embedding_dim_2 = 770
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 16, HEIGHT // 16, 1]))
         self.conv1 = layers.Conv2D(128, kernel_size=(3, 3), strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
         self.ac1 = layers.ReLU()
@@ -326,7 +326,7 @@ class StageII_Generator(tf.keras.Model):
 class StageII_Discriminator(tf.keras.Model):
     def __init__(self):
         super(StageII_Discriminator, self).__init__()
-        self.reshape = layers.Reshape((1, 1, 770))
+        self.reshape = layers.Reshape((1, 1, 770))                                   # embedding_dim_2 = 770
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 64, HEIGHT // 64, 1]))
 
         self.conv1 = layers.Conv2D(64, kernel_size=(4, 4), strides=2, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
