@@ -35,8 +35,8 @@ strategy = tf.distribute.MirroredStrategy()
 width, height = 256, 256
 assert width >= 128; height >= 128                                  # INFERIOR BOUNDARY : width, height = 128, 128  
 WIDTH , HEIGHT = width, height
-BATCH_SIZE = 64  
-BATCH_SIZE_2 = 32
+BATCH_SIZE = 8  
+BATCH_SIZE_2 = 4
 '''
 Note: the relationship between GPUs and SIZE is complicated, 
 meaning that larger size will guarantee the lower storing usage of GPUS, 
