@@ -425,7 +425,7 @@ class StageII_Discriminator(tf.keras.Model):
 
 
 class StageI(tf.keras.Model):
-    def __init__(self, output_dim, loss_fn, optimizer, char, gp_weight=10.0):
+    def __init__(self, output_dim, loss_fn, optimizer, char, erroneous_weight=5.3, gp_weight=10.0):
         super(StageI, self).__init__()
         self.generator = StageI_Generator()
         self.discriminator = StageI_Discriminator()
@@ -433,6 +433,8 @@ class StageI(tf.keras.Model):
         self.cross_entropy = loss_fn
         self.generator_optimizer = optimizer
         self.discriminator_optimizer = optimizer
+        self.g_erroneous_weight = erroneous_weight
+        self.d_erroneous_weight = erroneous_weight        
         self.gp_weight = gp_weight
         self.generator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
         self.discriminator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
@@ -455,13 +457,13 @@ class StageI(tf.keras.Model):
         fake_loss = self.cross_entropy(tf.ones_like(fake_output) * 0.1, fake_output)
         wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
         gp = self.gradient_penalty(real_images, fake_images, embeddings)
-        return real_loss + fake_loss + wrong_loss + self.gp_weight * gp
+        return real_loss + fake_loss + self.d_erroneous_weight * wrong_loss + self.gp_weight * gp
 
     def generator_loss(self, fake_output, wrong_output, mu, logvar):
         gen_loss = self.cross_entropy(tf.ones_like(fake_output) * 0.9, fake_output)
         wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)        
         kl_div = -0.5 * tf.reduce_mean(1 + logvar - tf.square(mu) - tf.exp(logvar))
-        return gen_loss + wrong_loss + kl_div
+        return gen_loss + self.g_erroneous_weight * wrong_loss + kl_div
 
     def call(self, text_embeddings, real_images, noise_size):
         noise = tf.random.normal([real_images.shape[0], noise_size])
@@ -495,7 +497,7 @@ class StageI(tf.keras.Model):
 
 
 class StageII(tf.keras.Model):
-    def __init__(self, output_dim, loss_fn, optimizer, char, GI, legacy_ca, noise_size, gp_weight=10.0):
+    def __init__(self, output_dim, loss_fn, optimizer, char, GI, legacy_ca, noise_size, erroneous_weight=5.3, gp_weight=10.0):
         super(StageII, self).__init__()
         self.generator = StageII_Generator()
         self.g1 = GI
@@ -506,6 +508,8 @@ class StageII(tf.keras.Model):
         self.cross_entropy = loss_fn
         self.generator_optimizer = optimizer
         self.discriminator_optimizer = optimizer
+        self.g_erroneous_weight = erroneous_weight
+        self.d_erroneous_weight = erroneous_weight
         self.gp_weight = gp_weight
         self.generator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
         self.discriminator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
@@ -528,13 +532,13 @@ class StageII(tf.keras.Model):
         fake_loss = self.cross_entropy(tf.ones_like(fake_output) * 0.1, fake_output)
         wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
         gp = self.gradient_penalty(real_images, fake_images, embeddings)
-        return real_loss + fake_loss + wrong_loss + self.gp_weight * gp
+        return real_loss + fake_loss + self.d_erroneous_weight * wrong_loss + self.gp_weight * gp
 
     def generator_loss(self, fake_output, wrong_output, mu, logvar):
         gen_loss = self.cross_entropy(tf.ones_like(fake_output) * 0.9, fake_output)
         wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
         kl_div = -0.5 * tf.reduce_mean(1 + logvar - tf.square(mu) - tf.exp(logvar))
-        return gen_loss + wrong_loss + kl_div
+        return gen_loss + self.g_erroneous_weight * wrong_loss + kl_div
 
     def train_step(self, text, real_images):
         with tf.GradientTape(persistent=True) as tape:
