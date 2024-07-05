@@ -109,7 +109,7 @@ class HierarchicalAttention(tf.keras.Model):
         super(HierarchicalAttention, self).__init__()
         self.dense = layers.Dense(channel)
         self.concate = layers.Concatenate(axis=-1)
-        self.reshape = layers.Reshape((WIDTH // 16 * HEIGHT// 16, channel))
+        self.reshape = layers.Reshape(((WIDTH // 16) * (HEIGHT // 16), channel))
         self.inversed_reshape = layers.Reshape(WIDTH // 16, HEIGHT // 16, channel)
         self.attention_layers = [layers.MultiHeadAttention(num_heads, d_model) for _ in range(num_layers)]
 
