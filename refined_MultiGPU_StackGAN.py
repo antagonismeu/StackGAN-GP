@@ -6,6 +6,7 @@ try:
         raise ImportError("Please upgrade your TensorFlow to version 2.x")
     from tensorflow.keras.layers import *
     from tensorflow.keras import layers
+    from tensorflow.keras.metrics import Precision, Recall
     import pandas as pd
     import argparse
     from PIL import Image
@@ -100,6 +101,60 @@ class CA2(tf.keras.Model):
         y = self.leaky_relu(y)
         mean, logvar = tf.split(y, num_or_size_splits=2, axis=1)
         return mean, logvar, x_
+
+
+
+
+class DynamicMemoryLayer(tf.keras.layers.Layer):
+    def __init__(self, Nm, Nr, Nw, **kwargs):
+        super(DynamicMemoryLayer, self).__init__(**kwargs)
+        self.Nm = Nm
+        self.Nr = Nr
+        self.Nw = Nw
+        self.flatten = Flatten()
+        self.reflection = Conv1D(self.Nr, 1)
+        self.text_reflection = Conv1D(self.Nw, 1)
+        self.concat = Concatenate(axis=0)
+        self.conv1x1_memory_w = Conv1D(self.Nm, 1)
+        self.conv1x1_memory_r = Conv1D(self.Nm, 1)
+        self.conv1x1_key = Conv1D(self.Nr, 1)
+        self.conv1x1_value = Conv1D(self.Nr, 1)
+        self.sigmoid = Activation('sigmoid')
+        self.W_gate = self.add_weight(shape=(2, self.Nr), initializer='random_normal', trainable=True)
+        self.b_gate = self.add_weight(shape=(1,), initializer='random_normal', trainable=True)
+
+
+    def _gen_params(self) : 
+        self.A = self.add_weight(shape=(self.Nw, ), initializer='random_normal', trainable=True)
+        self.B = self.add_weight(shape=(self.Nr, ), initializer='random_normal', trainable=True)
+ 
+    def call(self, W, Ri):
+        W = self.text_reflection(W)
+        Ri = self.flatten(Ri)
+        Ri = self.reflection(Ri)
+
+        probs = []
+        for j in range(tf.shape(Ri)[0]) :
+            sub_probs = []
+            reflect = []
+            for i in range(tf.shape(W)[0]):
+                self._gen_params()
+                g_wi = self.sigmoid(tf.multiply(self.A, W[i]) + tf.multiply(self.B, tf.reduce_mean(Ri, axis=0)))
+                mi = (self.conv1x1_memory_w(W[i]) * g_wi) + (self.conv1x1_memory(tf.reduce_mean(Ri, axis=0)) * (1 - g_wi))
+                reflect.append(self.conv1x1_value(mi))
+                aggregate_terms = 0
+                exp_terms = tf.exp(tf.matmul(self.conv1x1_key(mi), Ri[j], transpose_b=True))
+                aggregate_terms += exp_terms
+                sub_probs.append(exp_terms)
+            sub_tensor = tf.stack(sub_probs) / aggregate_terms
+            reflect_tensor = tf.stack(reflect)
+            tensor = tf.reduce_sum(reflect_tensor * sub_tensor[:, tf.newaxis], axis=0)
+            tensor_ = self.concat([tensor,  Ri[j]])
+            gr_i = tf.sigmoid(tf.matmul(tensor_, self.W_gate, transpose_b=True) + self.b_gate)
+            rnew_i = tensor * gr_i + Ri[j] * (1 - gr_i)
+            probs.append(rnew_i)
+        probs_ = tf.stack(probs)
+        return probs_ 
 
 
 
@@ -229,10 +284,13 @@ class StageI_Discriminator(tf.keras.Model):
 
 
 class StageII_Generator(tf.keras.Model):
-    def __init__(self):
+    def __init__(self, Nw=385, Nr=1025, Nm=642):
         super(StageII_Generator, self).__init__()
-        self.reshape = layers.Reshape((1, 1, 770))                                   # embedding_dim_2 = 770
+        self.reshape = layers.Reshape((1, 1, 770))  
+        self.reshape1 = layers.Reshape((1, 1, Nr))                                 # embedding_dim_2 = 770
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 16, HEIGHT // 16, 1]))
+        self.tile1 = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 16, HEIGHT // 16, 1]))
+        self.dm = DynamicMemoryLayer(Nm, Nr, Nw)
         self.conv1 = layers.Conv2D(128, kernel_size=(3, 3), strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
         self.ac1 = layers.ReLU()
         self.concat = layers.Concatenate(axis=-1)
@@ -289,9 +347,12 @@ class StageII_Generator(tf.keras.Model):
         img = self.conv3(img)
         img = self.bn2(img)
         img = self.ac3(img)
+        c1 = self.dm(c, img)
         c = self.reshape(c)
+        c1 = self.reshape1(c1)
         c = self.tile(c)
-        x = self.concat([c, img])
+        c1 = self.tile1(c1)
+        x = self.concat([c, img, c1])
         x = self.conv4(x)
         x = self.bn3(x)
         x = self.ac4(x)
@@ -436,6 +497,8 @@ class StageI(tf.keras.Model):
         self.g_erroneous_weight = erroneous_weight
         self.d_erroneous_weight = erroneous_weight        
         self.gp_weight = gp_weight
+        self.precision = Precision()
+        self.recall = Recall()
         self.generator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
         self.discriminator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
     
@@ -486,6 +549,9 @@ class StageI(tf.keras.Model):
             real_output, fake_output, d_wrong_output, g_wrong_output, mu, logvar, generated_images, embeddings = self(text_embeddings, real_images, noise_size)
             d_loss = self.discriminator_loss(real_output, fake_output, d_wrong_output, real_images, generated_images, embeddings)
             g_loss = self.generator_loss(fake_output, g_wrong_output,  mu, logvar)
+            self.precision.update_state(tf.reshape(real_images, [real_images.shape[0], -1]), tf.reshape(generated_images, [generated_images.shape[0], -1]))
+            self.recall.update_state(tf.reshape(real_images, [real_images.shape[0], -1]), tf.reshape(generated_images, [generated_images.shape[0], -1]))
+        print(f'Precision_I: {self.precision.result().numpy()}, Recall_I: {self.recall.result().numpy()}') 
         gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables + self.ca.trainable_variables)
         gradients_of_discriminator = tape.gradient(d_loss, self.discriminator.trainable_variables)
         self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables + self.ca.trainable_variables))
@@ -511,6 +577,8 @@ class StageII(tf.keras.Model):
         self.g_erroneous_weight = erroneous_weight
         self.d_erroneous_weight = erroneous_weight
         self.gp_weight = gp_weight
+        self.precision = Precision()
+        self.recall = Recall()        
         self.generator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
         self.discriminator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
     
@@ -560,6 +628,9 @@ class StageII(tf.keras.Model):
             g_wrong_output = tf.concat([wrong_output_4, wrong_output_3], axis=0)
             d_loss = self.discriminator_loss(real_output, fake_output, d_wrong_output, real_images, generated_images, c0)
             g_loss = self.generator_loss(fake_output, g_wrong_output, mu, logvar)
+            self.precision.update_state(tf.reshape(real_images, [real_images.shape[0], -1]), tf.reshape(generated_images, [generated_images.shape[0], -1]))
+            self.recall.update_state(tf.reshape(real_images, [real_images.shape[0], -1]), tf.reshape(generated_images, [generated_images.shape[0], -1]))
+        print(f'Precision_I: {self.precision.result().numpy()}, Recall_I: {self.recall.result().numpy()}')          
         gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables + self.ca1.trainable_variables + self.g1.trainable_variables)
         gradients_of_discriminator = tape.gradient(d_loss, self.discriminator.trainable_variables)
         self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables + self.ca1.trainable_variables + self.g1.trainable_variables))
