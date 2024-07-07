@@ -35,8 +35,8 @@ strategy = tf.distribute.MirroredStrategy()
 width, height = 256, 256
 assert width >= 128; height >= 128                                  # INFERIOR BOUNDARY : width, height = 128, 128  
 WIDTH , HEIGHT = width, height
-BATCH_SIZE = 8  
-BATCH_SIZE_2 = 4
+BATCH_SIZE = 32  
+BATCH_SIZE_2 = 16
 '''
 Note: the relationship between GPUs and SIZE is complicated, 
 meaning that larger size will guarantee the lower storing usage of GPUS, 
@@ -110,7 +110,7 @@ class HierarchicalAttention(tf.keras.Model):
         self.dense = layers.Dense(channel)
         self.concate = layers.Concatenate(axis=-1)
         self.reshape = layers.Reshape(((WIDTH // 16) * (HEIGHT // 16), channel))
-        self.inversed_reshape = layers.Reshape(WIDTH // 16, HEIGHT // 16, channel)
+        self.inversed_reshape = layers.Reshape((WIDTH // 16, HEIGHT // 16, channel))
         self.attention_layers = [layers.MultiHeadAttention(num_heads, d_model) for _ in range(num_layers)]
 
     def call(self, inputs):
@@ -578,8 +578,8 @@ class StageII(tf.keras.Model):
             fake_output = self.discriminator([generated_images, c0], training=True)
             wrong_output_1 = self.discriminator([real_images[:(BATCH_SIZE_2 - 1)], c0[1:]], training=True)
             wrong_output_2 = self.discriminator([tf.expand_dims(real_images[(BATCH_SIZE_2 - 1)], axis=0), tf.expand_dims(c0[0], axis=0)], training=True)
-            wrong_output_3 = self.discriminator([generated_images[:(BATCH_SIZE - 1)], c0[1:]], training=True)
-            wrong_output_4 = self.discriminator([tf.expand_dims(generated_images[(BATCH_SIZE - 1)], axis=0), tf.expand_dims(c0[0], axis=0)], training=True)               
+            wrong_output_3 = self.discriminator([generated_images[:(BATCH_SIZE_2 - 1)], c0[1:]], training=True)
+            wrong_output_4 = self.discriminator([tf.expand_dims(generated_images[(BATCH_SIZE_2 - 1)], axis=0), tf.expand_dims(c0[0], axis=0)], training=True)               
             d_wrong_output = tf.concat([wrong_output_2, wrong_output_1], axis=0)
             g_wrong_output = tf.concat([wrong_output_4, wrong_output_3], axis=0)
             d_loss = self.discriminator_loss(real_output, fake_output, d_wrong_output, real_images, generated_images, c0)
