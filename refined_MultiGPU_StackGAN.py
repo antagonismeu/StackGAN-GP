@@ -175,6 +175,7 @@ class StageI_Generator(tf.keras.Model):
 
         self.conv5 = layers.Conv2D(3,kernel_size=3,strides=1,padding='same',use_bias=False)
         self.tanh = layers.Activation('tanh')
+        
     def call(self, z):
         z = self.fc1(z)
         z = self.activation(z)
@@ -212,7 +213,7 @@ class StageI_Discriminator(tf.keras.Model):
         self.bn1 = layers.BatchNormalization()
         self.ac2 = layers.LeakyReLU(alpha=0.2)
 
-        self.conv3 = layers.Conv2D(256,kernel_size=(4,4),padding='same',strides=1,use_bias=False)
+        self.conv3 = layers.Conv2D(256,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
         self.bn2 = layers.BatchNormalization()
         self.ac3 = layers.LeakyReLU(alpha=0.2)
 
@@ -220,25 +221,9 @@ class StageI_Discriminator(tf.keras.Model):
         self.bn3 = layers.BatchNormalization()
         self.ac4 = layers.LeakyReLU(alpha=0.2)
 
-        self.conv5 = layers.Conv2D(1024,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
+        self.conv5 = layers.Conv2D(512,kernel_size=1,padding='same',strides=1)
         self.bn4 = layers.BatchNormalization()
         self.ac5 = layers.LeakyReLU(alpha=0.2)
-
-        self.conv6 = layers.Conv2D(512,kernel_size=(4,4),padding='same',strides=1,use_bias=False)
-        self.bn5 = layers.BatchNormalization()
-        self.ac6 = layers.LeakyReLU(alpha=0.2)
-
-        self.conv7 = layers.Conv2D(256,kernel_size=(4,4),padding='same',strides=1,use_bias=False)
-        self.bn6 = layers.BatchNormalization()
-        self.ac7 = layers.LeakyReLU(alpha=0.2)
-
-        self.conv8 = layers.Conv2D(128,kernel_size=(4,4),padding='same',strides=1,use_bias=False)
-        self.bn7 = layers.BatchNormalization()
-        self.ac8 = layers.LeakyReLU(alpha=0.2)
-
-        self.conv9 = layers.Conv2D(64,kernel_size=1,padding='same',strides=1)
-        self.bn8 = layers.BatchNormalization()
-        self.ac9 = layers.LeakyReLU(alpha=0.2)
 
         self.concat = layers.Concatenate(axis=-1)
         self.flatten = layers.Flatten()
@@ -257,24 +242,12 @@ class StageI_Discriminator(tf.keras.Model):
         x = self.conv4(x)
         x = self.bn3(x)
         x = self.ac4(x)
-        x = self.conv5(x)
-        x = self.bn4(x)
-        x = self.ac5(x)        
         aux = self.reshape(aux_input)
         aux = self.tile(aux)
         x = self.concat([x, aux])
-        x = self.conv6(x)
-        x = self.bn5(x)
-        x= self.ac6(x)
-        x = self.conv7(x)
-        x = self.bn6(x)
-        x = self.ac7(x) 
-        x = self.conv8(x)
-        x = self.bn7(x)
-        x = self.ac8(x)
-        x = self.conv9(x)
-        x = self.bn8(x)
-        x = self.ac9(x)                       
+        x = self.conv5(x)
+        x = self.bn4(x)
+        x= self.ac5(x)
         x = self.flatten(x)
         x = self.fc(x)        
         return x
@@ -285,6 +258,7 @@ class StageII_Generator(tf.keras.Model):
         super(StageII_Generator, self).__init__()
         self.reshape = layers.Reshape((1, 1, 770))                                  # embedding_dim_2 = 770
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 16, HEIGHT // 16, 1]))
+        self.concat = Concatenate(axis=-1)
         self.h_att = HierarchicalAttention()
         self.conv1 = layers.Conv2D(128, kernel_size=(3, 3), strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
         self.ac1 = layers.ReLU()
@@ -330,7 +304,18 @@ class StageII_Generator(tf.keras.Model):
 
         self.conv10 = layers.Conv2D(3, kernel_size=3, strides=1, padding='same', use_bias=False)
         self.tanh = layers.Activation('tanh')
-        
+
+    def weight(self, inputs) :
+        x, y = inputs
+        self.a = self.add_weight(
+            shape=x[1:],
+            initializer=tf.keras.initializers.RandomUniform(minval=0, maxval=1),
+            trainable=True,
+            name='alpha'
+        )
+        x = self.a * x + (1 - self.a) * y 
+        return x
+
     def call(self, inputs):
         c, img = inputs
         img = self.conv1(img)
@@ -343,7 +328,9 @@ class StageII_Generator(tf.keras.Model):
         img = self.ac3(img)
         c = self.reshape(c)
         c = self.tile(c)
+        y = self.concat([c, img])
         x = self.h_att([c, img])
+        x = self.weight([x, y])
         x = self.conv4(x)
         x = self.bn3(x)
         x = self.ac4(x)
@@ -950,8 +937,8 @@ def main_stage2(latent_dim, ca, g1, flag, path) :
 
 
 def main(flag1, flag2, path1, path2, mode="restart"):
-    latent_dim = 385 
-    latent_dim_2 = 770
+    latent_dim = 3073 
+    latent_dim_2 = 6145
 
 
     def load_state(flag1, path1):
