@@ -105,7 +105,7 @@ class CA2(tf.keras.Model):
 
 
 class HierarchicalAttention(tf.keras.Model):
-    def __init__(self, d_model=256, num_heads=8, num_layers=3, channel=1100):
+    def __init__(self, d_model, num_heads=8, num_layers=3, channel=1100):
         super(HierarchicalAttention, self).__init__()
         self.dense = layers.Dense(channel)
         self.concate = layers.Concatenate(axis=-1)
@@ -201,9 +201,9 @@ class StageI_Generator(tf.keras.Model):
 
 
 class StageI_Discriminator(tf.keras.Model):
-    def __init__(self):
+    def __init__(self, dimension):
         super(StageI_Discriminator, self).__init__()
-        self.reshape = layers.Reshape((1, 1, 385))                            # embedding_dim = 385
+        self.reshape = layers.Reshape((1, 1, dimension))                            # embedding_dim = 385
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 64, HEIGHT // 64, 1]))
         
         self.conv1 = layers.Conv2D(64,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
@@ -254,12 +254,12 @@ class StageI_Discriminator(tf.keras.Model):
 
 
 class StageII_Generator(tf.keras.Model):
-    def __init__(self):
+    def __init__(self, dimension):
         super(StageII_Generator, self).__init__()
-        self.reshape = layers.Reshape((1, 1, 770))                                  # embedding_dim_2 = 770
+        self.reshape = layers.Reshape((1, 1, dimension))                                  # embedding_dim_2 = 770
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 16, HEIGHT // 16, 1]))
         self.concat = Concatenate(axis=-1)
-        self.h_att = HierarchicalAttention()
+        self.h_att = HierarchicalAttention(dimension)
         self.conv1 = layers.Conv2D(128, kernel_size=(3, 3), strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
         self.ac1 = layers.ReLU()
         self.conv2 = layers.Conv2D(256, kernel_size=(4, 4), strides=2, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
@@ -363,9 +363,9 @@ class StageII_Generator(tf.keras.Model):
 
 
 class StageII_Discriminator(tf.keras.Model):
-    def __init__(self):
+    def __init__(self, dimension):
         super(StageII_Discriminator, self).__init__()
-        self.reshape = layers.Reshape((1, 1, 770))                                   # embedding_dim_2 = 770
+        self.reshape = layers.Reshape((1, 1, dimension))                                   # embedding_dim_2 = 770
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 64, HEIGHT // 64, 1]))
 
         self.conv1 = layers.Conv2D(64, kernel_size=(4, 4), strides=2, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
@@ -467,7 +467,7 @@ class StageI(tf.keras.Model):
     def __init__(self, output_dim, loss_fn, optimizer, char, erroneous_weight=5.3, gp_weight=10.0):
         super(StageI, self).__init__()
         self.generator = StageI_Generator()
-        self.discriminator = StageI_Discriminator()
+        self.discriminator = StageI_Discriminator(output_dim)
         self.ca = CA(output_dim, char)
         self.cross_entropy = loss_fn
         self.generator_optimizer = optimizer
@@ -538,12 +538,12 @@ class StageI(tf.keras.Model):
 class StageII(tf.keras.Model):
     def __init__(self, output_dim, loss_fn, optimizer, char, GI, legacy_ca, noise_size, erroneous_weight=5.3, gp_weight=10.0):
         super(StageII, self).__init__()
-        self.generator = StageII_Generator()
+        self.generator = StageII_Generator(output_dim)
         self.g1 = GI
         self.ca0 = legacy_ca
         self.noise_size = noise_size
         self.ca1 = CA2(output_dim, char)
-        self.discriminator = StageII_Discriminator()
+        self.discriminator = StageII_Discriminator(output_dim)
         self.cross_entropy = loss_fn
         self.generator_optimizer = optimizer
         self.discriminator_optimizer = optimizer
