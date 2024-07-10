@@ -1,5 +1,6 @@
 import os
 from char_train import CharCnnRnn
+from char_train_incre import CharCnnRnn as CharCnnRnnII 
 try:
     import tensorflow as tf
     if tf.__version__.startswith('1'):
@@ -55,7 +56,9 @@ def configuration() :
     module_path_1 = 'models/CharCNNRnn280.index'
     module_path_2 = 'models/checkpoint'
     module_path_3 = 'models/CharCNNRnn280.data-00000-of-00001'
-    module_list = [module_path_1, module_path_2, module_path_3]
+    module_path_4 = 'models/CharCNNRnn150.data-00000-of-00001'
+    module_path_5 = 'models/CharCNNRnn150.index'
+    module_list = [module_path_1, module_path_2, module_path_3, module_path_4, module_path_5]
     for element in module_list :
         flag = os.path.exists(element)
         if flag :
@@ -105,8 +108,9 @@ class CA2(tf.keras.Model):
 
 
 class HierarchicalAttention(tf.keras.Model):
-    def __init__(self, d_model, num_heads=8, num_layers=3, channel=6145 + 512):
+    def __init__(self, d_model, num_heads=8, num_layers=3):
         super(HierarchicalAttention, self).__init__()
+        channel = d_model + 512
         self.dense = layers.Dense(channel)
         self.concate = layers.Concatenate(axis=-1)
         self.reshape = layers.Reshape(((WIDTH // 16) * (HEIGHT // 16), channel))
@@ -865,8 +869,8 @@ def main_stage2(latent_dim, ca, g1, flag, path) :
         if the previous version is implemented under tf(2.11)(not include 2.11)
         the restoring line should be modified like this tf.keras.optimizers.legacy.RMSprop
         '''
-        char = CharCnnRnn(optimizer_)
-        char.load_weights('models/CharCNNRnn280')        
+        char = CharCnnRnnII(optimizer_)
+        char.load_weights('models/CharCNNRnn150')        
         load_dataset = DataProcessor(csv_path, images_path, GLOBAL_BATCH_SIZE_2, height, width)
         dataset = load_dataset.preprocedure()
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
