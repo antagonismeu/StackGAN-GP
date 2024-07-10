@@ -105,7 +105,7 @@ class CA2(tf.keras.Model):
 
 
 class HierarchicalAttention(tf.keras.Model):
-    def __init__(self, d_model, num_heads=8, num_layers=3, channel=1100):
+    def __init__(self, d_model, num_heads=8, num_layers=3, channel=6145 + 512):
         super(HierarchicalAttention, self).__init__()
         self.dense = layers.Dense(channel)
         self.concate = layers.Concatenate(axis=-1)
@@ -203,7 +203,7 @@ class StageI_Generator(tf.keras.Model):
 class StageI_Discriminator(tf.keras.Model):
     def __init__(self, dimension):
         super(StageI_Discriminator, self).__init__()
-        self.reshape = layers.Reshape((1, 1, dimension))                            # embedding_dim = 385
+        self.reshape = layers.Reshape((1, 1, dimension))                            
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 64, HEIGHT // 64, 1]))
         
         self.conv1 = layers.Conv2D(64,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
@@ -256,7 +256,7 @@ class StageI_Discriminator(tf.keras.Model):
 class StageII_Generator(tf.keras.Model):
     def __init__(self, dimension):
         super(StageII_Generator, self).__init__()
-        self.reshape = layers.Reshape((1, 1, dimension))                                  # embedding_dim_2 = 770
+        self.reshape = layers.Reshape((1, 1, dimension))                                  
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 16, HEIGHT // 16, 1]))
         self.concat = Concatenate(axis=-1)
         self.h_att = HierarchicalAttention(dimension)
@@ -305,14 +305,17 @@ class StageII_Generator(tf.keras.Model):
         self.conv10 = layers.Conv2D(3, kernel_size=3, strides=1, padding='same', use_bias=False)
         self.tanh = layers.Activation('tanh')
 
-    def weight(self, inputs) :
-        x, y = inputs
         self.a = self.add_weight(
-            shape=x[1:],
+            shape=(BATCH_SIZE_2, WIDTH // 16, HEIGHT // 16, dimension + 512),       
             initializer=tf.keras.initializers.RandomUniform(minval=0, maxval=1),
             trainable=True,
             name='alpha'
         )
+
+
+    def weight(self, inputs) :
+        x, y = inputs
+        print(x.shape, y.shape)
         x = self.a * x + (1 - self.a) * y 
         return x
 
@@ -365,7 +368,7 @@ class StageII_Generator(tf.keras.Model):
 class StageII_Discriminator(tf.keras.Model):
     def __init__(self, dimension):
         super(StageII_Discriminator, self).__init__()
-        self.reshape = layers.Reshape((1, 1, dimension))                                   # embedding_dim_2 = 770
+        self.reshape = layers.Reshape((1, 1, dimension))                                   
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 64, HEIGHT // 64, 1]))
 
         self.conv1 = layers.Conv2D(64, kernel_size=(4, 4), strides=2, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
@@ -937,8 +940,8 @@ def main_stage2(latent_dim, ca, g1, flag, path) :
 
 
 def main(flag1, flag2, path1, path2, mode="restart"):
-    latent_dim = 3073 
-    latent_dim_2 = 6145
+    latent_dim = 1200 
+    latent_dim_2 = 2403
 
 
     def load_state(flag1, path1):
