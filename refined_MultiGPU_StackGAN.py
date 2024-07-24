@@ -108,14 +108,14 @@ class CA2(tf.keras.Model):
 
 
 class HierarchicalAttention(tf.keras.Model):
-    def __init__(self, d_model, num_heads=8, num_layers=3):
+    def __init__(self, d_model, num_heads=8, num_layers=3, affiliation=512, width = WIDTH // 16, height = HEIGHT // 16):
         super(HierarchicalAttention, self).__init__()
-        channel = d_model + 512
+        channel = d_model + affiliation
         self.dense = layers.Dense(channel)
         self.concate = layers.Concatenate(axis=-1)
-        self.reshape = layers.Reshape(((WIDTH // 16) * (HEIGHT // 16), channel))
-        self.inversed_reshape = layers.Reshape((WIDTH // 16, HEIGHT // 16, channel))
-        self.attention_layers = [layers.MultiHeadAttention(num_heads, d_model) for _ in range(num_layers)]
+        self.reshape = layers.Reshape(((width * height, channel)))
+        self.inversed_reshape = layers.Reshape((width, height, channel))
+        self.attention_layers = [layers.MultiHeadAttention(num_heads, channel) for _ in range(num_layers)]
 
     def call(self, inputs):
         txt_feat, img_feat = inputs
@@ -177,7 +177,11 @@ class StageI_Generator(tf.keras.Model):
         self.bn4 = layers.BatchNormalization()
         self.ac4 = layers.ReLU()
 
-        self.conv5 = layers.Conv2D(3,kernel_size=3,strides=1,padding='same',use_bias=False)
+        self.conv5 = layers.Conv2D(32,kernel_size=3,strides=1,padding='same',use_bias=False)
+        self.bn5 = layers.BatchNormalization()
+        self.ac5 = layers.ReLU()
+
+        self.conv6 = layers.Conv2D(3,kernel_size=3,strides=1,padding='same',use_bias=False)
         self.tanh = layers.Activation('tanh')
         
     def call(self, z):
@@ -201,6 +205,9 @@ class StageI_Generator(tf.keras.Model):
         z = self.bn4(z)
         z = self.ac4(z)
         z = self.conv5(z)
+        z = self.bn5(z)
+        z = self.ac5(z)
+        z = self.conv6(z)
         return self.tanh(z)
 
 
@@ -209,25 +216,29 @@ class StageI_Discriminator(tf.keras.Model):
         super(StageI_Discriminator, self).__init__()
         self.reshape = layers.Reshape((1, 1, dimension))                            
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 64, HEIGHT // 64, 1]))
-        
-        self.conv1 = layers.Conv2D(64,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
-        self.ac1 = layers.LeakyReLU(alpha=0.2)
 
-        self.conv2 = layers.Conv2D(128,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
+        self.conv1 = layers.Conv2D(32,kernel_size=(4,4),padding='same',strides=1,use_bias=False)
+        self.ac1 = layers.LeakyReLU(alpha=0.2)
+        
+        self.conv2 = layers.Conv2D(64,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
         self.bn1 = layers.BatchNormalization()
         self.ac2 = layers.LeakyReLU(alpha=0.2)
 
-        self.conv3 = layers.Conv2D(256,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
+        self.conv3 = layers.Conv2D(128,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
         self.bn2 = layers.BatchNormalization()
         self.ac3 = layers.LeakyReLU(alpha=0.2)
 
-        self.conv4 = layers.Conv2D(512,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
+        self.conv4 = layers.Conv2D(256,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
         self.bn3 = layers.BatchNormalization()
         self.ac4 = layers.LeakyReLU(alpha=0.2)
 
-        self.conv5 = layers.Conv2D(512,kernel_size=1,padding='same',strides=1)
+        self.conv5 = layers.Conv2D(512,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
         self.bn4 = layers.BatchNormalization()
         self.ac5 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv6 = layers.Conv2D(512,kernel_size=1,padding='same',strides=1)
+        self.bn5 = layers.BatchNormalization()
+        self.ac6 = layers.LeakyReLU(alpha=0.2)
 
         self.concat = layers.Concatenate(axis=-1)
         self.flatten = layers.Flatten()
@@ -246,12 +257,15 @@ class StageI_Discriminator(tf.keras.Model):
         x = self.conv4(x)
         x = self.bn3(x)
         x = self.ac4(x)
+        x = self.conv5(x)
+        x = self.bn4(x)
+        x = self.ac5(x)
         aux = self.reshape(aux_input)
         aux = self.tile(aux)
         x = self.concat([x, aux])
-        x = self.conv5(x)
-        x = self.bn4(x)
-        x= self.ac5(x)
+        x = self.conv6(x)
+        x = self.bn5(x)
+        x= self.ac6(x)
         x = self.flatten(x)
         x = self.fc(x)        
         return x
@@ -319,7 +333,6 @@ class StageII_Generator(tf.keras.Model):
 
     def weight(self, inputs) :
         x, y = inputs
-        print(x.shape, y.shape)
         x = self.a * x + (1 - self.a) * y 
         return x
 
@@ -372,7 +385,8 @@ class StageII_Generator(tf.keras.Model):
 class StageII_Discriminator(tf.keras.Model):
     def __init__(self, dimension):
         super(StageII_Discriminator, self).__init__()
-        self.reshape = layers.Reshape((1, 1, dimension))                                   
+        self.reshape = layers.Reshape((1, 1, dimension))     
+        self.h_att = HierarchicalAttention(dimension, affiliation=512, width = WIDTH // 64, height = HEIGHT // 64)                              
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 64, HEIGHT // 64, 1]))
 
         self.conv1 = layers.Conv2D(64, kernel_size=(4, 4), strides=2, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
@@ -425,6 +439,22 @@ class StageII_Discriminator(tf.keras.Model):
         self.concat = layers.Concatenate(axis=-1)
         self.fc = layers.Dense(1, activation='sigmoid')
 
+
+        self.a = self.add_weight(
+            shape=(BATCH_SIZE_2, WIDTH // 64, HEIGHT // 64, dimension + 512),       
+            initializer=tf.keras.initializers.RandomUniform(minval=0, maxval=1),
+            trainable=True,
+            name='alpha'
+        )
+
+
+    def weight(self, inputs) :
+        x, y = inputs
+        x = self.a * x + (1 - self.a) * y 
+        return x
+
+
+
     def call(self, inputs):
         img, aux_input = inputs
         img = self.conv1(img)
@@ -461,7 +491,9 @@ class StageII_Discriminator(tf.keras.Model):
         x = self.ac10(x)
         aux = self.reshape(aux_input)
         aux = self.tile(aux)
-        z = self.concat([x, aux]) 
+        z = self.concat([x, aux])
+        z0 = self.h_att([x, aux])
+        z = self.weight([z, z0]) 
         z = self.conv12(z)
         z = self.bn11(z)
         z = self.ac11(z)  
@@ -498,18 +530,32 @@ class StageI(tf.keras.Model):
         gradient_penalty = tf.reduce_mean((gradients_l2 - 1.0) ** 2)
         return gradient_penalty
 
-    def discriminator_loss(self, real_output, fake_output, wrong_output, real_images, fake_images, embeddings):
+    def discriminator_loss(self, real_output, fake_output, wrong_outputs, real_images, fake_images, embeddings):
         real_loss = self.cross_entropy(tf.ones_like(real_output) * 0.9, real_output)
         fake_loss = self.cross_entropy(tf.ones_like(fake_output) * 0.1, fake_output)
-        wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
-        gp = self.gradient_penalty(real_images, fake_images, embeddings)
-        return real_loss + fake_loss + self.d_erroneous_weight * wrong_loss + self.gp_weight * gp
 
-    def generator_loss(self, fake_output, wrong_output, mu, logvar):
+        wrong_losses = []
+        for i, wrong_output in enumerate(wrong_outputs):
+            weight = 1.0 / (i + 1)  
+            wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
+            wrong_losses.append(weight * wrong_loss)
+
+        total_wrong_loss = tf.reduce_sum(wrong_losses)
+        gp = self.gradient_penalty(real_images, fake_images, embeddings)
+        return real_loss + fake_loss + self.d_erroneous_weight * total_wrong_loss + self.gp_weight * gp
+
+    def generator_loss(self, fake_output, wrong_outputs, mu, logvar):
         gen_loss = self.cross_entropy(tf.ones_like(fake_output) * 0.9, fake_output)
-        wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)        
+
+        wrong_losses = []
+        for i, wrong_output in enumerate(wrong_outputs):
+            weight = 1.0 / (i + 1)  
+            wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
+            wrong_losses.append(weight * wrong_loss)
+
+        total_wrong_loss = tf.reduce_sum(wrong_losses)
         kl_div = -0.5 * tf.reduce_mean(1 + logvar - tf.square(mu) - tf.exp(logvar))
-        return gen_loss + self.g_erroneous_weight * wrong_loss + kl_div
+        return gen_loss + self.g_erroneous_weight * total_wrong_loss + kl_div
 
     def call(self, text_embeddings, real_images, noise_size):
         noise = tf.random.normal([real_images.shape[0], noise_size])
@@ -519,13 +565,22 @@ class StageI(tf.keras.Model):
         generated_images = self.generator(c0_, training=True)
         real_output = self.discriminator([real_images, c0], training=True)
         fake_output = self.discriminator([generated_images, c0], training=True)
-        wrong_output_1 = self.discriminator([real_images[:(BATCH_SIZE - 1)], c0[1:]], training=True)
-        wrong_output_2 = self.discriminator([tf.expand_dims(real_images[(BATCH_SIZE - 1)], axis=0), tf.expand_dims(c0[0], axis=0)], training=True)
-        wrong_output_3 = self.discriminator([generated_images[:(BATCH_SIZE - 1)], c0[1:]], training=True)
-        wrong_output_4 = self.discriminator([tf.expand_dims(generated_images[(BATCH_SIZE - 1)], axis=0), tf.expand_dims(c0[0], axis=0)], training=True)        
-        d_wrong_output = tf.concat([wrong_output_2, wrong_output_1], axis=0)
-        g_wrong_output = tf.concat([wrong_output_4, wrong_output_3], axis=0)
-        return real_output, fake_output, d_wrong_output, g_wrong_output, mu, logvar, generated_images, c0
+
+        d_wrong_outputs = []
+        g_wrong_outputs = []
+        for i in range(1, BATCH_SIZE + 1):
+            wrong_output_1 = self.discriminator([real_images[i:], c0[:-i]], training=True)
+            wrong_output_2 = self.discriminator([real_images[:i], c0[-i:]], training=True)
+            wrong_output_concat_1_2 = tf.concat([wrong_output_1, wrong_output_2], axis=0)
+            d_wrong_outputs.append(wrong_output_concat_1_2)
+
+            wrong_output_3 = self.discriminator([generated_images[i:], c0[:-i]], training=True)
+            wrong_output_4 = self.discriminator([generated_images[:i], c0[-i:]], training=True)
+            wrong_output_concat_3_4 = tf.concat([wrong_output_3, wrong_output_4], axis=0)
+            g_wrong_outputs.append(wrong_output_concat_3_4)
+
+        return real_output, fake_output, d_wrong_outputs, g_wrong_outputs, mu, logvar, generated_images, c0
+
 
     def train_step(self, text_embeddings, real_images, noise_size):
         with tf.GradientTape(persistent=True) as tape:
@@ -573,18 +628,32 @@ class StageII(tf.keras.Model):
         gradient_penalty = tf.reduce_mean((gradients_l2 - 1.0) ** 2)
         return gradient_penalty
 
-    def discriminator_loss(self, real_output, fake_output, wrong_output, real_images, fake_images, embeddings):
+    def discriminator_loss(self, real_output, fake_output, wrong_outputs, real_images, fake_images, embeddings):
         real_loss = self.cross_entropy(tf.ones_like(real_output) * 0.9, real_output)
         fake_loss = self.cross_entropy(tf.ones_like(fake_output) * 0.1, fake_output)
-        wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
-        gp = self.gradient_penalty(real_images, fake_images, embeddings)
-        return real_loss + fake_loss + self.d_erroneous_weight * wrong_loss + self.gp_weight * gp
 
-    def generator_loss(self, fake_output, wrong_output, mu, logvar):
+        wrong_losses = []
+        for i, wrong_output in enumerate(wrong_outputs):
+            weight = 1.0 / (i + 1)  
+            wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
+            wrong_losses.append(weight * wrong_loss)
+
+        total_wrong_loss = tf.reduce_sum(wrong_losses)
+        gp = self.gradient_penalty(real_images, fake_images, embeddings)
+        return real_loss + fake_loss + self.d_erroneous_weight * total_wrong_loss + self.gp_weight * gp
+
+    def generator_loss(self, fake_output, wrong_outputs, mu, logvar):
         gen_loss = self.cross_entropy(tf.ones_like(fake_output) * 0.9, fake_output)
-        wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
+
+        wrong_losses = []
+        for i, wrong_output in enumerate(wrong_outputs):
+            weight = 1.0 / (i + 1)  
+            wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
+            wrong_losses.append(weight * wrong_loss)
+
+        total_wrong_loss = tf.reduce_sum(wrong_losses)
         kl_div = -0.5 * tf.reduce_mean(1 + logvar - tf.square(mu) - tf.exp(logvar))
-        return gen_loss + self.g_erroneous_weight * wrong_loss + kl_div
+        return gen_loss + self.g_erroneous_weight * total_wrong_loss + kl_div
 
     def train_step(self, text, real_images):
         with tf.GradientTape(persistent=True) as tape:
@@ -598,14 +667,20 @@ class StageII(tf.keras.Model):
             generated_images = self.generator([c0, preliminary_images], training=True)
             real_output = self.discriminator([real_images, c0], training=True)
             fake_output = self.discriminator([generated_images, c0], training=True)
-            wrong_output_1 = self.discriminator([real_images[:(BATCH_SIZE_2 - 1)], c0[1:]], training=True)
-            wrong_output_2 = self.discriminator([tf.expand_dims(real_images[(BATCH_SIZE_2 - 1)], axis=0), tf.expand_dims(c0[0], axis=0)], training=True)
-            wrong_output_3 = self.discriminator([generated_images[:(BATCH_SIZE_2 - 1)], c0[1:]], training=True)
-            wrong_output_4 = self.discriminator([tf.expand_dims(generated_images[(BATCH_SIZE_2 - 1)], axis=0), tf.expand_dims(c0[0], axis=0)], training=True)               
-            d_wrong_output = tf.concat([wrong_output_2, wrong_output_1], axis=0)
-            g_wrong_output = tf.concat([wrong_output_4, wrong_output_3], axis=0)
-            d_loss = self.discriminator_loss(real_output, fake_output, d_wrong_output, real_images, generated_images, c0)
-            g_loss = self.generator_loss(fake_output, g_wrong_output, mu, logvar)       
+            d_wrong_outputs = []
+            g_wrong_outputs = []
+            for i in range(1, BATCH_SIZE_2 + 1):
+                wrong_output_1 = self.discriminator([real_images[i:], c0[:-i]], training=True)
+                wrong_output_2 = self.discriminator([real_images[:i], c0[-i:]], training=True)
+                wrong_output_concat_1_2 = tf.concat([wrong_output_1, wrong_output_2], axis=0)
+                d_wrong_outputs.append(wrong_output_concat_1_2)
+
+                wrong_output_3 = self.discriminator([generated_images[i:], c0[:-i]], training=True)
+                wrong_output_4 = self.discriminator([generated_images[:i], c0[-i:]], training=True)
+                wrong_output_concat_3_4 = tf.concat([wrong_output_3, wrong_output_4], axis=0)
+                g_wrong_outputs.append(wrong_output_concat_3_4)  
+            d_loss = self.discriminator_loss(real_output, fake_output, d_wrong_outputs, real_images, generated_images, c0)
+            g_loss = self.generator_loss(fake_output, g_wrong_outputs, mu, logvar)       
         gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables + self.ca1.trainable_variables + self.g1.trainable_variables)
         gradients_of_discriminator = tape.gradient(d_loss, self.discriminator.trainable_variables)
         self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables + self.ca1.trainable_variables + self.g1.trainable_variables))
@@ -877,8 +952,9 @@ def main_stage2(latent_dim, ca, g1, flag, path) :
         optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
         s2 = StageII(latent_dim, cross_entropy, optimizer, char, g1, ca ,noise_size)
         if flag :
-            s2.generator.load_weights(f'models/{path[0]}')
-            s2.discriminator.load_weights(f'models/{path[1]}')
+            s2.generator.load_weights(f'models/{path[1]}')
+            s2.discriminator.load_weights(f'models/{path[2]}')
+            s2.ca1.load_weights(f'models/{path[0]}')
         s2.compile(optimizer=optimizer, loss=cross_entropy)
 
 
@@ -944,8 +1020,8 @@ def main_stage2(latent_dim, ca, g1, flag, path) :
 
 
 def main(flag1, flag2, path1, path2, mode="restart"):
-    latent_dim = 1200 
-    latent_dim_2 = 2403
+    latent_dim = 1500 
+    latent_dim_2 = 2503
 
 
     def load_state(flag1, path1):
@@ -999,6 +1075,6 @@ if __name__ == "__main__":
     parser.add_argument('--flag1', action='store_true', help='A flag to recover training StageI')
     parser.add_argument('-path1', type=str, nargs=3, default=None, help='if flag is True, add three arguments CA_path, G1_path, D1_path')
     parser.add_argument('--flag2', action='store_true', help='A flag to recover training StageII')
-    parser.add_argument('-path2', type=str, nargs=2, default=None, help='if flag is True, add three arguments G2_path, D2_path')
+    parser.add_argument('-path2', type=str, nargs=3, default=None, help='if flag is True, add three arguments CA2_path, G2_path, D2_path')
     args = parser.parse_args()
     main(args.flag1, args.flag2, args.path1, args.path2, args.mode)
