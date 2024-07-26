@@ -2,13 +2,9 @@ import os
 from char_train import CharCnnRnn
 from char_train_incre import CharCnnRnn as CharCnnRnnII 
 try:
-    import tensorflow_probability as tfp
     import tensorflow as tf
     if tf.__version__.startswith('1'):
         raise ImportError("Please upgrade your TensorFlow to version 2.x")
-    if tf.__version__ < '2.16.0' :
-        os.system('pip3 install tensorflow --upgrade')
-        raise ImportError('Require tensorflow version at least 2.16.0, now the error has been fixed')
     from tensorflow.keras.layers import *
     from tensorflow.keras import layers
     import pandas as pd
@@ -18,7 +14,7 @@ try:
 except Exception as e:
     print(f"Error encountered during loading required packages: {e}")
     print('Attempt to reinitialize the interface.....')
-    requirements = ['numpy', 'tensorflow', 'pandas', 'Pillow', 'tensorflow_probability[tf]']
+    requirements = ['numpy', 'tensorflow', 'pandas', 'Pillow']
     for item in requirements :
         os.system(f'pip3 install {item}')
         print('Done!')
@@ -536,19 +532,13 @@ class StageI(tf.keras.Model):
         gradient_penalty = tf.reduce_mean((gradients_l2 - 1.0) ** 2)
         return gradient_penalty
 
-    def grant_weight(self, index) :
-        normal_dist = tfp.distributions.Normal(loc=self.mean, scale=self.stddev)
-        if index == 0 :
-            lower_bound = 0
-            upper_bound = (index + 1) / 4
-        if 0 < index <= BATCH_SIZE - 2 : 
-            lower_bound =  index / 4
-            upper_bound = (index + 1) / 4    
-        if index == BATCH_SIZE - 1 :
-            lower_bound = index / 4
-            upper_bound = np.inf              
-        cdf_lower = normal_dist.cdf(lower_bound)
-        cdf_upper = normal_dist.cdf(upper_bound)
+    def grant_weight(self, index):
+        lower_bound = index / 4 if index > 0 else 0
+        upper_bound = (index + 1) / 4 if index < BATCH_SIZE - 1 else np.inf
+        
+        cdf_lower = 0.5 * (1 + np.math.erf((lower_bound - self.mean) / (self.stddev * np.sqrt(2))))
+        cdf_upper = 0.5 * (1 + np.math.erf((upper_bound - self.mean) / (self.stddev * np.sqrt(2))))
+        
         interval_prob = (cdf_upper - cdf_lower) * 2
         return interval_prob
 
@@ -558,7 +548,7 @@ class StageI(tf.keras.Model):
 
         wrong_losses = []
         for i, wrong_output in enumerate(wrong_outputs):
-            weight = self.grant_weight(i)     
+            weight = self.grant_weight(i)
             wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
             wrong_losses.append(weight * wrong_loss)
 
@@ -571,7 +561,7 @@ class StageI(tf.keras.Model):
 
         wrong_losses = []
         for i, wrong_output in enumerate(wrong_outputs):
-            weight = self.grant_weight(i)  
+            weight = self.grant_weight(i)
             wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
             wrong_losses.append(weight * wrong_loss)
 
@@ -603,20 +593,17 @@ class StageI(tf.keras.Model):
 
         return real_output, fake_output, d_wrong_outputs, g_wrong_outputs, mu, logvar, generated_images, c0
 
-
     def train_step(self, text_embeddings, real_images, noise_size):
         with tf.GradientTape(persistent=True) as tape:
             real_output, fake_output, d_wrong_output, g_wrong_output, mu, logvar, generated_images, embeddings = self(text_embeddings, real_images, noise_size)
             d_loss = self.discriminator_loss(real_output, fake_output, d_wrong_output, real_images, generated_images, embeddings)
-            g_loss = self.generator_loss(fake_output, g_wrong_output,  mu, logvar)
+            g_loss = self.generator_loss(fake_output, g_wrong_output, mu, logvar)
         gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables + self.ca.trainable_variables)
         gradients_of_discriminator = tape.gradient(d_loss, self.discriminator.trainable_variables)
         self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables + self.ca.trainable_variables))
         self.discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, self.discriminator.trainable_variables))
         
         return d_loss, g_loss
-
-
 
 
 class StageII(tf.keras.Model):
@@ -652,19 +639,13 @@ class StageII(tf.keras.Model):
         gradient_penalty = tf.reduce_mean((gradients_l2 - 1.0) ** 2)
         return gradient_penalty
 
-    def grant_weight(self, index) :
-        normal_dist = tfp.distributions.Normal(loc=self.mean, scale=self.stddev)
-        if index == 0 :
-            lower_bound = 0
-            upper_bound = (index + 1) / 4
-        if 0 < index <= BATCH_SIZE_2 - 2 : 
-            lower_bound =  index / 4
-            upper_bound = (index + 1) / 4    
-        if index == BATCH_SIZE_2 - 1 :
-            lower_bound = index / 4
-            upper_bound = np.inf              
-        cdf_lower = normal_dist.cdf(lower_bound)
-        cdf_upper = normal_dist.cdf(upper_bound)
+    def grant_weight(self, index):
+        lower_bound = index / 4 if index > 0 else 0
+        upper_bound = (index + 1) / 4 if index < BATCH_SIZE_2 - 1 else np.inf
+        
+        cdf_lower = 0.5 * (1 + np.math.erf((lower_bound - self.mean) / (self.stddev * np.sqrt(2))))
+        cdf_upper = 0.5 * (1 + np.math.erf((upper_bound - self.mean) / (self.stddev * np.sqrt(2))))
+        
         interval_prob = (cdf_upper - cdf_lower) * 2
         return interval_prob
     
@@ -687,7 +668,7 @@ class StageII(tf.keras.Model):
 
         wrong_losses = []
         for i, wrong_output in enumerate(wrong_outputs):
-            weight = self.grant_weight(i)  
+            weight = self.grant_weight(i)
             wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
             wrong_losses.append(weight * wrong_loss)
 
@@ -727,8 +708,6 @@ class StageII(tf.keras.Model):
         self.discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, self.discriminator.trainable_variables))
         
         return d_loss, g_loss
-
-
 
 
 
