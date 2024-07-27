@@ -1,4 +1,5 @@
 import os
+import math
 from char_train import CharCnnRnn
 from char_train_incre import CharCnnRnn as CharCnnRnnII 
 try:
@@ -217,26 +218,26 @@ class StageI_Discriminator(tf.keras.Model):
         self.reshape = layers.Reshape((1, 1, dimension))                            
         self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 64, HEIGHT // 64, 1]))
 
-        self.conv1 = layers.Conv2D(32,kernel_size=(4,4),padding='same',strides=1,use_bias=False)
+        self.conv1 = layers.Conv2D(32, kernel_size=(4,4), padding='same', strides=1, use_bias=False)
         self.ac1 = layers.LeakyReLU(alpha=0.2)
         
-        self.conv2 = layers.Conv2D(64,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
+        self.conv2 = layers.Conv2D(64, kernel_size=(4,4), padding='same', strides=2, use_bias=False)
         self.bn1 = layers.BatchNormalization()
         self.ac2 = layers.LeakyReLU(alpha=0.2)
 
-        self.conv3 = layers.Conv2D(128,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
+        self.conv3 = layers.Conv2D(128, kernel_size=(4,4), padding='same', strides=2, use_bias=False)
         self.bn2 = layers.BatchNormalization()
         self.ac3 = layers.LeakyReLU(alpha=0.2)
 
-        self.conv4 = layers.Conv2D(256,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
+        self.conv4 = layers.Conv2D(256, kernel_size=(4,4), padding='same', strides=2, use_bias=False)
         self.bn3 = layers.BatchNormalization()
         self.ac4 = layers.LeakyReLU(alpha=0.2)
 
-        self.conv5 = layers.Conv2D(512,kernel_size=(4,4),padding='same',strides=2,use_bias=False)
+        self.conv5 = layers.Conv2D(512, kernel_size=(4,4), padding='same', strides=2, use_bias=False)
         self.bn4 = layers.BatchNormalization()
         self.ac5 = layers.LeakyReLU(alpha=0.2)
 
-        self.conv6 = layers.Conv2D(512,kernel_size=1,padding='same',strides=1)
+        self.conv6 = layers.Conv2D(512, kernel_size=1, padding='same', strides=1)
         self.bn5 = layers.BatchNormalization()
         self.ac6 = layers.LeakyReLU(alpha=0.2)
 
@@ -244,7 +245,7 @@ class StageI_Discriminator(tf.keras.Model):
         self.flatten = layers.Flatten()
         self.fc = layers.Dense(1, activation='sigmoid')
 
-    def call(self, inputs):
+    def call(self, inputs, return_features=False):
         img, aux_input = inputs
         x = self.conv1(img)
         x = self.ac1(x)
@@ -260,15 +261,19 @@ class StageI_Discriminator(tf.keras.Model):
         x = self.conv5(x)
         x = self.bn4(x)
         x = self.ac5(x)
+        features = x  
         aux = self.reshape(aux_input)
         aux = self.tile(aux)
         x = self.concat([x, aux])
         x = self.conv6(x)
         x = self.bn5(x)
-        x= self.ac6(x)
+        x = self.ac6(x)
         x = self.flatten(x)
-        x = self.fc(x)        
-        return x
+        x = self.fc(x)
+        if return_features:
+            return x, features
+        else:
+            return x
 
 
 class StageII_Generator(tf.keras.Model):
@@ -455,7 +460,7 @@ class StageII_Discriminator(tf.keras.Model):
 
 
 
-    def call(self, inputs):
+    def call(self, inputs, return_features=False):
         img, aux_input = inputs
         img = self.conv1(img)
         img = self.ac1(img)
@@ -489,6 +494,7 @@ class StageII_Discriminator(tf.keras.Model):
         img_ = self.bn10(img_)
         x = self.add([img, img_])  
         x = self.ac10(x)
+        features = x
         aux = self.reshape(aux_input)
         aux = self.tile(aux)
         z = self.concat([x, aux])
@@ -498,12 +504,15 @@ class StageII_Discriminator(tf.keras.Model):
         z = self.bn11(z)
         z = self.ac11(z)  
         z = self.flatten(z)
-        z = self.fc(z)                                                   
-        return z               
+        z = self.fc(z) 
+        if return_features :
+            return z, features   
+        else :                                               
+            return z               
 
 
 class StageI(tf.keras.Model):
-    def __init__(self, output_dim, loss_fn, optimizer, char, erroneous_weight=5.3, gp_weight=10.0):
+    def __init__(self, output_dim, loss_fn, optimizer, char, erroneous_weight=5.3, gp_weight=10.0, fm_weight=0.22):
         super(StageI, self).__init__()
         self.generator = StageI_Generator()
         self.discriminator = StageI_Discriminator(output_dim)
@@ -514,7 +523,8 @@ class StageI(tf.keras.Model):
         self.g_erroneous_weight = erroneous_weight
         self.d_erroneous_weight = erroneous_weight 
         self.mean = 0.0
-        self.stddev = 1.0       
+        self.stddev = 1.0  
+        self.fm_weight = fm_weight     
         self.gp_weight = gp_weight
         self.generator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
         self.discriminator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
@@ -536,8 +546,8 @@ class StageI(tf.keras.Model):
         lower_bound = index / 4 if index > 0 else 0
         upper_bound = (index + 1) / 4 if index < BATCH_SIZE - 1 else np.inf
         
-        cdf_lower = 0.5 * (1 + np.math.erf((lower_bound - self.mean) / (self.stddev * np.sqrt(2))))
-        cdf_upper = 0.5 * (1 + np.math.erf((upper_bound - self.mean) / (self.stddev * np.sqrt(2))))
+        cdf_lower = 0.5 * (1 + math.erf((lower_bound - self.mean) / (self.stddev * math.sqrt(2))))
+        cdf_upper = 0.5 * (1 + math.erf((upper_bound - self.mean) / (self.stddev * math.sqrt(2))))
         
         interval_prob = (cdf_upper - cdf_lower) * 2
         return interval_prob
@@ -556,7 +566,7 @@ class StageI(tf.keras.Model):
         gp = self.gradient_penalty(real_images, fake_images, embeddings)
         return real_loss + fake_loss + self.d_erroneous_weight * total_wrong_loss + self.gp_weight * gp
 
-    def generator_loss(self, fake_output, wrong_outputs, mu, logvar):
+    def generator_loss(self, fake_output, wrong_outputs, mu, logvar, real_features, fake_features):
         gen_loss = self.cross_entropy(tf.ones_like(fake_output) * 0.9, fake_output)
 
         wrong_losses = []
@@ -565,9 +575,10 @@ class StageI(tf.keras.Model):
             wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
             wrong_losses.append(weight * wrong_loss)
 
-        total_wrong_loss = tf.reduce_sum(wrong_losses)
+        total_wrong_loss = tf.reduce_sum(wrong_losses)        
+        fm_loss = tf.reduce_mean(tf.square(tf.reduce_mean(real_features, axis=[0, 1, 2]) - tf.reduce_mean(fake_features, axis=[0, 1, 2])))
         kl_div = -0.5 * tf.reduce_mean(1 + logvar - tf.square(mu) - tf.exp(logvar))
-        return gen_loss + self.g_erroneous_weight * total_wrong_loss + kl_div
+        return gen_loss + self.g_erroneous_weight * total_wrong_loss + kl_div + self.fm_weight * fm_loss
 
     def call(self, text_embeddings, real_images, noise_size):
         noise = tf.random.normal([real_images.shape[0], noise_size])
@@ -575,8 +586,8 @@ class StageI(tf.keras.Model):
         c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
         c0_ = tf.concat([c0, noise], axis=1)
         generated_images = self.generator(c0_, training=True)
-        real_output = self.discriminator([real_images, c0], training=True)
-        fake_output = self.discriminator([generated_images, c0], training=True)
+        real_output, real_features = self.discriminator([real_images, c0], training=True, return_features=True)
+        fake_output, fake_features = self.discriminator([generated_images, c0], training=True, return_features=True)
 
         d_wrong_outputs = []
         g_wrong_outputs = []
@@ -591,13 +602,14 @@ class StageI(tf.keras.Model):
             wrong_output_concat_3_4 = tf.concat([wrong_output_3, wrong_output_4], axis=0)
             g_wrong_outputs.append(wrong_output_concat_3_4)
 
-        return real_output, fake_output, d_wrong_outputs, g_wrong_outputs, mu, logvar, generated_images, c0
+        return real_output, fake_output, d_wrong_outputs, g_wrong_outputs, mu, logvar, generated_images, c0, real_features, fake_features
+
 
     def train_step(self, text_embeddings, real_images, noise_size):
         with tf.GradientTape(persistent=True) as tape:
-            real_output, fake_output, d_wrong_output, g_wrong_output, mu, logvar, generated_images, embeddings = self(text_embeddings, real_images, noise_size)
+            real_output, fake_output, d_wrong_output, g_wrong_output, mu, logvar, generated_images, embeddings, real_features, fake_features = self(text_embeddings, real_images, noise_size)
             d_loss = self.discriminator_loss(real_output, fake_output, d_wrong_output, real_images, generated_images, embeddings)
-            g_loss = self.generator_loss(fake_output, g_wrong_output, mu, logvar)
+            g_loss = self.generator_loss(fake_output, g_wrong_output, mu, logvar, real_features, fake_features)
         gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables + self.ca.trainable_variables)
         gradients_of_discriminator = tape.gradient(d_loss, self.discriminator.trainable_variables)
         self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables + self.ca.trainable_variables))
@@ -607,7 +619,7 @@ class StageI(tf.keras.Model):
 
 
 class StageII(tf.keras.Model):
-    def __init__(self, output_dim, loss_fn, optimizer, char, GI, legacy_ca, noise_size, erroneous_weight=5.3, gp_weight=10.0):
+    def __init__(self, output_dim, loss_fn, optimizer, char, GI, legacy_ca, noise_size, erroneous_weight=5.3, gp_weight=10.0, fm_weight=0.22):
         super(StageII, self).__init__()
         self.generator = StageII_Generator(output_dim)
         self.g1 = GI
@@ -622,6 +634,7 @@ class StageII(tf.keras.Model):
         self.d_erroneous_weight = erroneous_weight
         self.mean = 0.0
         self.stddev = 1.0
+        self.fm_weight = fm_weight
         self.gp_weight = gp_weight      
         self.generator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
         self.discriminator.compile(optimizer=self.generator_optimizer, loss=self.cross_entropy)
@@ -643,12 +656,12 @@ class StageII(tf.keras.Model):
         lower_bound = index / 4 if index > 0 else 0
         upper_bound = (index + 1) / 4 if index < BATCH_SIZE_2 - 1 else np.inf
         
-        cdf_lower = 0.5 * (1 + np.math.erf((lower_bound - self.mean) / (self.stddev * np.sqrt(2))))
-        cdf_upper = 0.5 * (1 + np.math.erf((upper_bound - self.mean) / (self.stddev * np.sqrt(2))))
+        cdf_lower = 0.5 * (1 + math.erf((lower_bound - self.mean) / (self.stddev * math.sqrt(2))))
+        cdf_upper = 0.5 * (1 + math.erf((upper_bound - self.mean) / (self.stddev * math.sqrt(2))))
         
         interval_prob = (cdf_upper - cdf_lower) * 2
         return interval_prob
-    
+
     def discriminator_loss(self, real_output, fake_output, wrong_outputs, real_images, fake_images, embeddings):
         real_loss = self.cross_entropy(tf.ones_like(real_output) * 0.9, real_output)
         fake_loss = self.cross_entropy(tf.ones_like(fake_output) * 0.1, fake_output)
@@ -663,7 +676,7 @@ class StageII(tf.keras.Model):
         gp = self.gradient_penalty(real_images, fake_images, embeddings)
         return real_loss + fake_loss + self.d_erroneous_weight * total_wrong_loss + self.gp_weight * gp
 
-    def generator_loss(self, fake_output, wrong_outputs, mu, logvar):
+    def generator_loss(self, fake_output, wrong_outputs, mu, logvar, real_features, fake_features):
         gen_loss = self.cross_entropy(tf.ones_like(fake_output) * 0.9, fake_output)
 
         wrong_losses = []
@@ -673,35 +686,42 @@ class StageII(tf.keras.Model):
             wrong_losses.append(weight * wrong_loss)
 
         total_wrong_loss = tf.reduce_sum(wrong_losses)
+        fm_loss = tf.reduce_mean(tf.square(tf.reduce_mean(real_features, axis=[0, 1, 2]) - tf.reduce_mean(fake_features, axis=[0, 1, 2])))
         kl_div = -0.5 * tf.reduce_mean(1 + logvar - tf.square(mu) - tf.exp(logvar))
-        return gen_loss + self.g_erroneous_weight * total_wrong_loss + kl_div
+        return gen_loss + self.g_erroneous_weight * total_wrong_loss + kl_div + self.fm_weight * fm_loss
 
-    def train_step(self, text, real_images):
+    def call(self, text_embeddings, real_images, noise_size):
+        noise = tf.random.normal([real_images.shape[0], noise_size])
+        mu, logvar, _ = self.ca1(text_embeddings, training=True)
+        mu0, logvar0, _ = self.ca0(text_embeddings, training=False)
+        c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
+        pre_c0 = mu0 + tf.exp(logvar0 * 0.5) * tf.random.normal(shape=mu0.shape)
+        c0_ = tf.concat([pre_c0, noise], axis=1)
+        preliminary_images = self.g1(c0_, training=False)
+        generated_images = self.generator([c0, preliminary_images], training=True)
+        real_output, real_features = self.discriminator([real_images, c0], training=True, return_features=True)
+        fake_output, fake_features = self.discriminator([generated_images, c0], training=True, return_features=True)
+
+        d_wrong_outputs = []
+        g_wrong_outputs = []
+        for i in range(1, BATCH_SIZE_2 + 1):
+            wrong_output_1 = self.discriminator([real_images[i:], c0[:-i]], training=True)
+            wrong_output_2 = self.discriminator([real_images[:i], c0[-i:]], training=True)
+            wrong_output_concat_1_2 = tf.concat([wrong_output_1, wrong_output_2], axis=0)
+            d_wrong_outputs.append(wrong_output_concat_1_2)
+
+            wrong_output_3 = self.discriminator([generated_images[i:], c0[:-i]], training=True)
+            wrong_output_4 = self.discriminator([generated_images[:i], c0[-i:]], training=True)
+            wrong_output_concat_3_4 = tf.concat([wrong_output_3, wrong_output_4], axis=0)
+            g_wrong_outputs.append(wrong_output_concat_3_4)
+
+        return real_output, fake_output, d_wrong_outputs, g_wrong_outputs, mu, logvar, generated_images, c0, real_features, fake_features
+
+    def train_step(self, text_embeddings, real_images, noise_size):
         with tf.GradientTape(persistent=True) as tape:
-            noise = tf.random.normal([real_images.shape[0], self.noise_size])
-            mu, logvar, _ = self.ca1(text, training=True)
-            mu0, logvar0, _ = self.ca0(text, training=False)
-            c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
-            pre_c0 = mu0 + tf.exp(logvar0 * 0.5) * tf.random.normal(shape=mu0.shape)
-            c0_ = tf.concat([pre_c0, noise], axis=1)
-            preliminary_images = self.g1(c0_, training=False)
-            generated_images = self.generator([c0, preliminary_images], training=True)
-            real_output = self.discriminator([real_images, c0], training=True)
-            fake_output = self.discriminator([generated_images, c0], training=True)
-            d_wrong_outputs = []
-            g_wrong_outputs = []
-            for i in range(1, BATCH_SIZE_2 + 1):
-                wrong_output_1 = self.discriminator([real_images[i:], c0[:-i]], training=True)
-                wrong_output_2 = self.discriminator([real_images[:i], c0[-i:]], training=True)
-                wrong_output_concat_1_2 = tf.concat([wrong_output_1, wrong_output_2], axis=0)
-                d_wrong_outputs.append(wrong_output_concat_1_2)
-
-                wrong_output_3 = self.discriminator([generated_images[i:], c0[:-i]], training=True)
-                wrong_output_4 = self.discriminator([generated_images[:i], c0[-i:]], training=True)
-                wrong_output_concat_3_4 = tf.concat([wrong_output_3, wrong_output_4], axis=0)
-                g_wrong_outputs.append(wrong_output_concat_3_4)  
-            d_loss = self.discriminator_loss(real_output, fake_output, d_wrong_outputs, real_images, generated_images, c0)
-            g_loss = self.generator_loss(fake_output, g_wrong_outputs, mu, logvar)       
+            real_output, fake_output, d_wrong_output, g_wrong_output, mu, logvar, generated_images, embeddings, real_features, fake_features = self(text_embeddings, real_images, noise_size)
+            d_loss = self.discriminator_loss(real_output, fake_output, d_wrong_output, real_images, generated_images, embeddings)
+            g_loss = self.generator_loss(fake_output, g_wrong_output, mu, logvar, real_features, fake_features)
         gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables + self.ca1.trainable_variables + self.g1.trainable_variables)
         gradients_of_discriminator = tape.gradient(d_loss, self.discriminator.trainable_variables)
         self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables + self.ca1.trainable_variables + self.g1.trainable_variables))
@@ -793,11 +813,41 @@ class DataProcessor:
         return dataset
 
 
-    def validate(self, validate_descriptions, CA, CA2, G_I, G_II, noise_size, path, signature, stage2=True):
+
+    def create_collage(self, images, path, filename, collage_width= WIDTH // 4):
+        if not images:
+            print("No images to create a collage.")
+            return
+
+        num_images = len(images)
+        img_height, img_width = images[0].shape[:2]
+        aspect_ratio = img_width / img_height
+        collage_height = int(collage_width / aspect_ratio)
+
+        rows = int(np.ceil(np.sqrt(num_images)))
+        cols = int(np.ceil(num_images / rows))
+
+        collage_image = Image.new('RGB', (collage_width * cols, collage_height * rows))
+
+        for i, image in enumerate(images):
+            img = ((image + 1.0) * 127.5).numpy().astype(np.uint8)
+            img = np.clip(img, 0, 255).astype(np.uint8)
+            img = Image.fromarray(img)
+            img = img.resize((collage_width, collage_height))
+            x = (i % cols) * collage_width
+            y = (i // cols) * collage_height
+            collage_image.paste(img, (x, y))
+
+        collage_image.save(os.path.join(path, filename))
+
+
+
+    def validate(self, validate_descriptions, CA, CA2, G_I, G_II, noise_size, path, signature, stage2=True, collage_flag=False):
         try:
             subfolder = os.path.join(path, str(signature))
             os.makedirs(subfolder, exist_ok=True)           
 
+            images = []
             for idx, sentence in enumerate(validate_descriptions):
                 cluster = sentence
                 one_hot, _ = self.preparation_txt(cluster, self.max_len)
@@ -812,10 +862,13 @@ class DataProcessor:
                     mu, logvar, _ = CA2(one_hot)
                     c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
                     generated_images = G_II([c0, generated_images])
-                
                 final_image = generated_images[0]
-                nickname = f"GI_{idx + 1}"
-                self.postprocedure(final_image, subfolder, nickname)
+                if not collage_flag :
+                    nickname = f"GI_{idx + 1}"
+                    self.postprocedure(final_image, subfolder, nickname)
+                if collage_flag :
+                    images.append(final_image)
+                    self.create_collage(images, subfolder, f'collage{str(signature)}.png')
         except Exception as e:
             print(f"Error encountered during generating images from the given descriptions: {e}")
 
@@ -847,7 +900,13 @@ def main_stage1(latent_dim, flag, path) :
         decay_rate=0.96,
         staircase=True
     )
-    save_interval = 50
+    lr_schedule_2 = tf.keras.optimizers.schedules.ExponentialDecay(
+        learning_rate,
+        decay_steps=100,
+        decay_rate=0.962,
+        staircase=True
+    )
+    save_interval = 30
 
     with strategy.scope() :
         load_dataset = DataProcessor(csv_path, images_path, GLOBAL_BATCH_SIZE, height, width)
@@ -861,7 +920,7 @@ def main_stage1(latent_dim, flag, path) :
         char = CharCnnRnn(optimizer_)
         char.load_weights('models/CharCNNRnn280')
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
-        optimizer = tf.keras.optimizers.legacy.Adam(learning_rate, beta_1=0.5)
+        optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=lr_schedule_2, beta_1=0.5)
         s1 = StageI(latent_dim, cross_entropy, optimizer, char)
         if flag :
             s1.generator.load_weight(f'modles/{path[1]}')
@@ -914,9 +973,23 @@ def main_stage1(latent_dim, flag, path) :
         if (epoch + 1) % save_interval == 0 or epoch == epochs_stage - 1:
             sentences_group = [
                 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background',
-                'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background'
+                'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background',
+                'a pixel art character with square dark green glasses, a wallet-shaped head and a rust-colored body on a cool background',
+                'a pixel art character with square glasses with black frames and red eyes, a helicopter-shaped head and a blue-colored body on a cool background',
+                'a pixel art character with square dark red glasses, a ketchup-shaped head and a microwave-shaped head and a grayscale-colored body on a cool background',
+                'a pixel art character with square black glasses, a hotdog-shaped head and a peachy-colored body on a warm background',
+                'a pixel art character with square light green glasses, a werewolf-shaped head and a orange-colored body on a warm background',
+                'a pixel art character with square green glasses, a toiletpaper-full-shaped head and a cold-colored body on a warm background',
+                'a pixel art character with square dark brown glasse, a rosebud-shaped head and a bege-colored body on a cool background',
+                'a pixel art character with square pink and orange glasses, a raven-shaped head and a grayscale-colored body on a cool background',
+                'a pixel art character with square dark pink glasses, a chocolate-shaped head and a gray-colored body on a warm background',
+                'a pixel art character with square yellow glasses, a blackhole-shaped head and a teal-colored body on a cool background',
+                'a pixel art character with square dark green glasses, a yeti-shaped head and a redpinkish-colored body on a cool background',
+                'a pixel art character with square orange glasses, a chef hat-shaped head and a purple-colored body on a cool background',
+                'a pixel art character with square dark green glasses, a treasure chest-shaped headand a peachy-colored body on a cool background',
+                'a pixel art character with square red glasses, a pirateship-shaped head and hotbrown-colored body on a warm background'
             ]
-            load_dataset.validate(sentences_group, s1.ca, None, s1.generator, None, noise_size, save_path, f'N{epoch + 1}', False)
+            load_dataset.validate(sentences_group, s1.ca, None, s1.generator, None, noise_size, save_path, f'N{epoch + 1}', False, True)
             s1.ca.save_weights(f'models/CA{epoch + 1}')
             s1.ca.save_weights(f'models/CA_backup')
             s1.generator.save_weights(f'models/G1{epoch + 1}')
@@ -1021,9 +1094,23 @@ def main_stage2(latent_dim, ca, g1, flag, path) :
         if (epoch + 1) % save_interval == 0 or epoch == epochs_stage - 1 :
             sentences_group = [
                 'a pixel art character with black glasses, a toothbrush-shaped head and a redpinkish-colored body on a warm background',
-                'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background'
+                'a pixel art character with square yellow and orange glasses, a beer-shaped head and a gunk-colored body on a cool background',
+                'a pixel art character with square dark green glasses, a wallet-shaped head and a rust-colored body on a cool background',
+                'a pixel art character with square glasses with black frames and red eyes, a helicopter-shaped head and a blue-colored body on a cool background',
+                'a pixel art character with square dark red glasses, a ketchup-shaped head and a microwave-shaped head and a grayscale-colored body on a cool background',
+                'a pixel art character with square black glasses, a hotdog-shaped head and a peachy-colored body on a warm background',
+                'a pixel art character with square light green glasses, a werewolf-shaped head and a orange-colored body on a warm background',
+                'a pixel art character with square green glasses, a toiletpaper-full-shaped head and a cold-colored body on a warm background',
+                'a pixel art character with square dark brown glasse, a rosebud-shaped head and a bege-colored body on a cool background',
+                'a pixel art character with square pink and orange glasses, a raven-shaped head and a grayscale-colored body on a cool background',
+                'a pixel art character with square dark pink glasses, a chocolate-shaped head and a gray-colored body on a warm background',
+                'a pixel art character with square yellow glasses, a blackhole-shaped head and a teal-colored body on a cool background',
+                'a pixel art character with square dark green glasses, a yeti-shaped head and a redpinkish-colored body on a cool background',
+                'a pixel art character with square orange glasses, a chef hat-shaped head and a purple-colored body on a cool background',
+                'a pixel art character with square dark green glasses, a treasure chest-shaped headand a peachy-colored body on a cool background',
+                'a pixel art character with square red glasses, a pirateship-shaped head and hotbrown-colored body on a warm background'
             ]
-            load_dataset.validate(sentences_group, ca, s2.ca1, s2.g1, s2.generator, noise_size, save_path, f'N{epoch + 1}')
+            load_dataset.validate(sentences_group, ca, s2.ca1, s2.g1, s2.generator, noise_size, save_path, f'N{epoch + 1}', collage_flag=True)
             s2.generator.save_weights(f'models/G2{epoch + 1}')
             s2.ca1.save_weights(f'models/CA2{epoch + 1}')
             s2.discriminator.save_weights(f'models/D2{epoch + 1}')
