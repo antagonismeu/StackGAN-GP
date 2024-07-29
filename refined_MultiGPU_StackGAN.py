@@ -124,7 +124,8 @@ class AttentionLayer(tf.keras.layers.Layer):
         # Context vector
         context_vector = attention_weights * features
         context_vector = tf.reduce_sum(context_vector, axis=1)
-
+        context_vector = tf.expand_dims(context_vector, axis=2)
+        context_vector = tf.tile(context_vector, [1, 1, 16, 1])
         return context_vector, attention_weights
 
 
@@ -132,11 +133,12 @@ class AttentionLayer(tf.keras.layers.Layer):
 class ResidualBlock(tf.keras.Model):
     def __init__(self, filters):
         super(ResidualBlock, self).__init__()
-        self.conv1 = layers.Conv2D(filters, 3, padding='same')
+        self.conv1 = layers.Conv2D(filters,kernel_size=3,strides=1,padding='same',use_bias=False)
         self.bn1 = layers.BatchNormalization()
         self.relu = layers.ReLU()
-        self.conv2 = layers.Conv2D(filters, 3, padding='same')
+        self.conv2 = layers.Conv2D(filters,kernel_size=3,strides=1,padding='same',use_bias=False)
         self.bn2 = layers.BatchNormalization()
+        self.relu2 = layers.ReLU()
 
     def call(self, x):
         residual = x
@@ -145,6 +147,7 @@ class ResidualBlock(tf.keras.Model):
         x = self.relu(x)
         x = self.conv2(x)
         x = self.bn2(x)
+        x = self.relu2(x)
         return x + residual
 
 
@@ -283,15 +286,16 @@ class StageII_Generator(tf.keras.Model):
         self.attention = AttentionLayer(dimension)
 
         self.shrink_block = [
-            layers.Conv2D(64, kernel_size=(4,4), padding='same', strides=2, use_bias=False),
+            layers.Conv2D(128, kernel_size=(4,4), padding='same', strides=2, use_bias=False),
             layers.BatchNormalization(),
             layers.LeakyReLU(alpha=0.2),
             layers.Conv2D(128, kernel_size=(4,4), padding='same', strides=2, use_bias=False),
             layers.BatchNormalization(),
             layers.LeakyReLU(alpha=0.2)
         ]
+        self.transition = layers.Conv2D(256, kernel_size=(4, 4), padding='same', strides=1, use_biaas=False)
         self.upsample_blocks = [layers.UpSampling2D(size=(2, 2)) for _ in range(4)]
-        self.conv_blocks = [ResidualBlock(filters=256) for _ in range(4)]
+        self.conv_blocks = [ResidualBlock(filters=256) for _ in range(2)]
 
         self.final_conv = layers.Conv2D(3, kernel_size=3, strides=1, padding='same', use_bias=False)
         self.tanh = layers.Activation('tanh')
@@ -305,10 +309,11 @@ class StageII_Generator(tf.keras.Model):
         c = self.tile(c)
         x = self.concat([c, img])
         context_vector, _ = self.attention(x, c)
-
-        for upsample, conv in zip(self.upsample_blocks, self.conv_blocks):
-            x = upsample(context_vector)
-            x = conv(x)
+        x = self.transition(context_vector)
+        for upsample in self.upsample_blocks:
+            x = upsample(x)
+            for conv in self.conv_blocks :
+                x = conv(x)
 
         x = self.final_conv(x)
         return self.tanh(x)
@@ -317,43 +322,88 @@ class StageII_Generator(tf.keras.Model):
 class MultiScaleDiscriminator(tf.keras.Model):
     def __init__(self):
         super(MultiScaleDiscriminator, self).__init__()
-        self.disc_small = self.build_discriminator()
-        self.disc_medium = self.build_discriminator()
-        self.disc_large = self.build_discriminator()
 
-    def build_discriminator(self, inputs):
-        x = layers.Conv2D(128, kernel_size=4, strides=2, padding='same', use_bias=False)(inputs)
-        x = layers.LeakyReLU(alpha=0.2)(x)
+        self.small_logit_block = [
+            layers.Flatten(),
+            layers.Dense(1, activation='sigmoid')
+        ] 
 
-        x = layers.Conv2D(256, kernel_size=4, strides=2, padding='same', use_bias=False)(x)
-        x = layers.BatchNormalization()(x)
-        x = layers.LeakyReLU(alpha=0.2)(x)
+        self.medium_logit_block = [
+            layers.Flatten(),
+            layers.Dense(1, activation='sigmoid')
+        ] 
 
-        x = layers.Conv2D(256, kernel_size=4, strides=2, padding='same', use_bias=False)(x)
-        x = layers.BatchNormalization()(x)
-        x = layers.LeakyReLU(alpha=0.2)(x)
+        self.large_logit_block = [
+            layers.Flatten(),
+            layers.Dense(1, activation='sigmoid')
+        ]     
 
-        x = layers.Conv2D(512, kernel_size=4, strides=2, padding='same', use_bias=False)(x)
-        x = layers.BatchNormalization()(x)
-        x = layers.LeakyReLU(alpha=0.2)(x)
+        self.small_block = [
+            layers.Conv2D(32, kernel_size=4, strides=2, padding='same', use_bias=False),
+            layers.LeakyReLU(alpha=0.2),
+            layers.Conv2D(64, kernel_size=4, strides=2, padding='same', use_bias=False),
+            layers.BatchNormalization(),
+            layers.LeakyReLU(alpha=0.2)
+        ]
 
-        features = x
-        x = layers.Conv2D(1, kernel_size=4, strides=1, padding='same', use_bias=False)(x)
-        return x, features
+        self.medium_block = [
+            layers.Conv2D(32, kernel_size=4, strides=2, padding='same', use_bias=False),
+            layers.LeakyReLU(alpha=0.2),
+            layers.Conv2D(64, kernel_size=4, strides=2, padding='same', use_bias=False),
+            layers.BatchNormalization(),
+            layers.LeakyReLU(alpha=0.2),
+            layers.Conv2D(128, kernel_size=4, strides=2, padding='same', use_bias=False),
+            layers.BatchNormalization(),
+            layers.LeakyReLU(alpha=0.2)
+        ]
+
+        self.large_block = [
+            layers.Conv2D(256, kernel_size=4, strides=2, padding='same', use_bias=False),
+            layers.LeakyReLU(alpha=0.2),
+            layers.Conv2D(256, kernel_size=4, strides=2, padding='same', use_bias=False),
+            layers.BatchNormalization(),
+            layers.LeakyReLU(alpha=0.2),
+            layers.Conv2D(256, kernel_size=4, strides=2, padding='same', use_bias=False),
+            layers.BatchNormalization(),
+            layers.LeakyReLU(alpha=0.2),
+            layers.Conv2D(512, kernel_size=4, strides=2, padding='same', use_bias=False),
+            layers.BatchNormalization(),
+            layers.LeakyReLU(alpha=0.2)
+        ]  
+
+    def forward(self, inputs):
+        x1, x2, x3 = inputs
+        
+        for layer in self.small_block:
+            x1 = layer(x1)
+        logit1 = x1
+        for layer in self.small_logit_block:
+            logit1 = layer(logit1)
+        
+        for layer in self.medium_block:
+            x2 = layer(x2)
+        logit2 = x2
+        for layer in self.medium_logit_block:
+            logit2 = layer(logit2)
+        
+        for layer in self.large_block:
+            x3 = layer(x3)
+        logit3 = x3
+        for layer in self.large_logit_block:
+            logit3 = layer(logit3)
+            
+        return logit1, logit2, logit3, x3
 
     def call(self, inputs, return_features=False):
-        small_img = tf.image.resize(inputs, [WIDTH // 4, HEIGHT // 4])
-        medium_img = tf.image.resize(inputs, [WIDTH // 2, HEIGHT // 2])
+        small_img = inputs
+        medium_img = inputs
         large_img = inputs
-        if return_features :
-            small_logits, _ = self.disc_small(small_img)
-            medium_logits, _ = self.disc_medium(medium_img)
-            large_logits, features = self.disc_large(large_img)
+        
+        if return_features:
+            small_logits, medium_logits, large_logits, features = self.forward([small_img, medium_img, large_img])
             return small_logits, medium_logits, large_logits, features
-        else :
-            small_logits, _ = self.disc_small(small_img)
-            medium_logits, _ = self.disc_medium(medium_img)
-            large_logits, _ = self.disc_large(large_img)
+        else:
+            small_logits, medium_logits, large_logits, _ = self.forward([small_img, medium_img, large_img])
             return small_logits, medium_logits, large_logits
                 
 
@@ -373,7 +423,7 @@ class StageII_Discriminator(tf.keras.Model):
             layers.BatchNormalization(),
             layers.LeakyReLU(alpha=0.2)
         ]
-        self.attention = AttentionLayer(128)
+        self.attention = AttentionLayer(256)
 
         self.multi_scale_discriminator = MultiScaleDiscriminator()
 
@@ -388,7 +438,7 @@ class StageII_Discriminator(tf.keras.Model):
 
         context_vector, _ = self.attention(x, text)
         if return_features :
-            small_logits, medium_logits, large_logits, features = self.multi_scale_discriminator(context_vector)
+            small_logits, medium_logits, large_logits, features = self.multi_scale_discriminator(context_vector, return_features)
             return (small_logits, medium_logits, large_logits), features        
         else :
             small_logits, medium_logits, large_logits = self.multi_scale_discriminator(context_vector)
@@ -528,7 +578,7 @@ class StageII(tf.keras.Model):
         alpha = tf.broadcast_to(alpha, real_images.shape)
         interpolated_images = alpha * real_images + (1 - alpha) * fake_images
 
-        with tf.GradientTape() as tape:
+        with tf.GradientTape(persistent=True) as tape:
             tape.watch(interpolated_images)
             d_interpolated_small, d_interpolated_medium, d_interpolated_large = self.discriminator([interpolated_images, embeddings], training=True)
 
@@ -931,8 +981,8 @@ def main_stage2(latent_dim, ca, g1, flag, path) :
     epochs_stage = 500
     csv_path = 'descriptions.csv'
     images_path = './images'
-    noise_size = latent_dim
-    learning_rate = 2e-4
+    noise_size = 200
+    learning_rate = 7e-5
     save_path = './samples'
     initial_learning_rate = 0.001
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
@@ -1047,7 +1097,7 @@ def main_stage2(latent_dim, ca, g1, flag, path) :
 
 def main(flag1, flag2, path1, path2, mode="restart"):
     latent_dim = 1500 
-    latent_dim_2 = 200
+    latent_dim_2 = 256
 
 
     def load_state(flag1, path1):
