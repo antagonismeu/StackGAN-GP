@@ -109,23 +109,23 @@ class CA2(tf.keras.Model):
 
 
 class AttentionLayer(tf.keras.layers.Layer):
-    def __init__(self, units):
+    def __init__(self, units, factor):
         super(AttentionLayer, self).__init__()
         self.units = units
-        self.W = tf.keras.layers.Dense(units)
-        self.U = tf.keras.layers.Dense(units)
-        self.V = tf.keras.layers.Dense(1)
+        self.factor = factor
+        self.W = layers.Dense(units)
+        self.U = layers.Dense(units)
+        self.V = layers.Dense(1)
 
     def call(self, features, hidden):
-        # Score computation
         score = tf.nn.tanh(self.W(features) + self.U(hidden))
-        attention_weights = tf.nn.softmax(self.V(score), axis=1)
+        attention_weights = tf.nn.softmax(self.V(score), axis=(1, 2))
 
-        # Context vector
         context_vector = attention_weights * features
-        context_vector = tf.reduce_sum(context_vector, axis=1)
-        context_vector = tf.expand_dims(context_vector, axis=2)
-        context_vector = tf.tile(context_vector, [1, 1, 16, 1])
+        context_vector = tf.reduce_sum(context_vector, axis=[1, 2])
+        context_vector = tf.expand_dims(context_vector, axis=1)
+        context_vector = tf.expand_dims(context_vector, axis=1)
+        context_vector = tf.tile(context_vector, [1, self.factor, self.factor, 1])
         return context_vector, attention_weights
 
 
@@ -141,10 +141,10 @@ class ResidualBlock(tf.keras.Model):
         self.relu2 = layers.ReLU()
 
     def call(self, x):
-        residual = x
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.relu(x)
+        residual = x
         x = self.conv2(x)
         x = self.bn2(x)
         x = self.relu2(x)
@@ -280,132 +280,31 @@ class StageII_Generator(tf.keras.Model):
         super(StageII_Generator, self).__init__()
         self.dense = layers.Dense(dimension)
         self.reshape = layers.Reshape((1, 1, dimension))
-        self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 16, HEIGHT // 16, 1]))
-        self.concat = layers.Concatenate(axis=-1)
-
-        self.attention = AttentionLayer(dimension)
-
-        self.shrink_block = [
-            layers.Conv2D(128, kernel_size=(4,4), padding='same', strides=2, use_bias=False),
-            layers.BatchNormalization(),
-            layers.LeakyReLU(alpha=0.2),
-            layers.Conv2D(128, kernel_size=(4,4), padding='same', strides=2, use_bias=False),
-            layers.BatchNormalization(),
-            layers.LeakyReLU(alpha=0.2)
-        ]
-        self.transition = layers.Conv2D(256, kernel_size=(4, 4), padding='same', strides=1, use_biaas=False)
-        self.upsample_blocks = [layers.UpSampling2D(size=(2, 2)) for _ in range(4)]
-        self.conv_blocks = [ResidualBlock(filters=256) for _ in range(2)]
-
+        self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 4, HEIGHT // 4, 1]))
+        self.attention = AttentionLayer(dimension, WIDTH // 4)
+        self.residual_block1 = ResidualBlock(filters=64)
+        self.residual_block2 = ResidualBlock(filters=128)
+        self.upsample1 = layers.UpSampling2D(size=(2, 2))
+        self.residual_block3 = ResidualBlock(filters=256)
+        self.upsample2 = layers.UpSampling2D(size=(2, 2))
+        self.residual_block4 = ResidualBlock(filters=512)
         self.final_conv = layers.Conv2D(3, kernel_size=3, strides=1, padding='same', use_bias=False)
         self.tanh = layers.Activation('tanh')
 
     def call(self, inputs):
         c, img = inputs
         c = self.dense(c)
-        for layer in self.shrink_block :
-             img = layer(img)      
         c = self.reshape(c)
         c = self.tile(c)
-        x = self.concat([c, img])
-        context_vector, _ = self.attention(x, c)
-        x = self.transition(context_vector)
-        for upsample in self.upsample_blocks:
-            x = upsample(x)
-            for conv in self.conv_blocks :
-                x = conv(x)
-
+        x, _ = self.attention(img, c)
+        x = self.residual_block1(x)
+        x = self.residual_block2(x)
+        x = self.upsample1(x)
+        x = self.residual_block3(x)
+        x = self.upsample2(x)
+        x = self.residual_block4(x)
         x = self.final_conv(x)
         return self.tanh(x)
-
-
-class MultiScaleDiscriminator(tf.keras.Model):
-    def __init__(self):
-        super(MultiScaleDiscriminator, self).__init__()
-
-        self.small_logit_block = [
-            layers.Flatten(),
-            layers.Dense(1, activation='sigmoid')
-        ] 
-
-        self.medium_logit_block = [
-            layers.Flatten(),
-            layers.Dense(1, activation='sigmoid')
-        ] 
-
-        self.large_logit_block = [
-            layers.Flatten(),
-            layers.Dense(1, activation='sigmoid')
-        ]     
-
-        self.small_block = [
-            layers.Conv2D(32, kernel_size=4, strides=2, padding='same', use_bias=False),
-            layers.LeakyReLU(alpha=0.2),
-            layers.Conv2D(64, kernel_size=4, strides=2, padding='same', use_bias=False),
-            layers.BatchNormalization(),
-            layers.LeakyReLU(alpha=0.2)
-        ]
-
-        self.medium_block = [
-            layers.Conv2D(32, kernel_size=4, strides=2, padding='same', use_bias=False),
-            layers.LeakyReLU(alpha=0.2),
-            layers.Conv2D(64, kernel_size=4, strides=2, padding='same', use_bias=False),
-            layers.BatchNormalization(),
-            layers.LeakyReLU(alpha=0.2),
-            layers.Conv2D(128, kernel_size=4, strides=2, padding='same', use_bias=False),
-            layers.BatchNormalization(),
-            layers.LeakyReLU(alpha=0.2)
-        ]
-
-        self.large_block = [
-            layers.Conv2D(256, kernel_size=4, strides=2, padding='same', use_bias=False),
-            layers.LeakyReLU(alpha=0.2),
-            layers.Conv2D(256, kernel_size=4, strides=2, padding='same', use_bias=False),
-            layers.BatchNormalization(),
-            layers.LeakyReLU(alpha=0.2),
-            layers.Conv2D(256, kernel_size=4, strides=2, padding='same', use_bias=False),
-            layers.BatchNormalization(),
-            layers.LeakyReLU(alpha=0.2),
-            layers.Conv2D(512, kernel_size=4, strides=2, padding='same', use_bias=False),
-            layers.BatchNormalization(),
-            layers.LeakyReLU(alpha=0.2)
-        ]  
-
-    def forward(self, inputs):
-        x1, x2, x3 = inputs
-        
-        for layer in self.small_block:
-            x1 = layer(x1)
-        logit1 = x1
-        for layer in self.small_logit_block:
-            logit1 = layer(logit1)
-        
-        for layer in self.medium_block:
-            x2 = layer(x2)
-        logit2 = x2
-        for layer in self.medium_logit_block:
-            logit2 = layer(logit2)
-        
-        for layer in self.large_block:
-            x3 = layer(x3)
-        logit3 = x3
-        for layer in self.large_logit_block:
-            logit3 = layer(logit3)
-            
-        return logit1, logit2, logit3, x3
-
-    def call(self, inputs, return_features=False):
-        small_img = inputs
-        medium_img = inputs
-        large_img = inputs
-        
-        if return_features:
-            small_logits, medium_logits, large_logits, features = self.forward([small_img, medium_img, large_img])
-            return small_logits, medium_logits, large_logits, features
-        else:
-            small_logits, medium_logits, large_logits, _ = self.forward([small_img, medium_img, large_img])
-            return small_logits, medium_logits, large_logits
-                
 
 
 class StageII_Discriminator(tf.keras.Model):
@@ -413,37 +312,41 @@ class StageII_Discriminator(tf.keras.Model):
         super(StageII_Discriminator, self).__init__()
         self.dense = layers.Dense(dimension)
         self.reshape_text = layers.Reshape((1, 1, dimension))
-        self.tile_text = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 4, HEIGHT // 4, 1]))  
-        self.concat_text_img = layers.Concatenate(axis=-1)
-        self.shrink_block = [
-            layers.Conv2D(64, kernel_size=(4,4), padding='same', strides=2, use_bias=False),
+        self.tile_text = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH, HEIGHT, 1]))
+        self.attention = AttentionLayer(dimension, WIDTH)
+        self.conv_blocks = [
+            layers.Conv2D(512, kernel_size=4, strides=2, padding='same', use_bias=False),
+            layers.LeakyReLU(alpha=0.2),
+            layers.Conv2D(256, kernel_size=4, strides=2, padding='same', use_bias=False),
             layers.BatchNormalization(),
             layers.LeakyReLU(alpha=0.2),
-            layers.Conv2D(128, kernel_size=(4,4), padding='same', strides=2, use_bias=False),
+            layers.Conv2D(128, kernel_size=4, strides=2, padding='same', use_bias=False),
+            layers.BatchNormalization(),
+            layers.LeakyReLU(alpha=0.2),
+            layers.Conv2D(64, kernel_size=4, strides=2, padding='same', use_bias=False),
             layers.BatchNormalization(),
             layers.LeakyReLU(alpha=0.2)
         ]
-        self.attention = AttentionLayer(256)
-
-        self.multi_scale_discriminator = MultiScaleDiscriminator()
+        self.logit_block = [
+            layers.Flatten(),
+            layers.Dense(1, activation='sigmoid')
+        ]
 
     def call(self, inputs, return_features=False):
         img, text = inputs
         text = self.dense(text)
         text = self.reshape_text(text)
         text = self.tile_text(text)
-        for layer in self.shrink_block :
-            img = layer(img)
-        x = self.concat_text_img([img, text])
-
-        context_vector, _ = self.attention(x, text)
-        if return_features :
-            small_logits, medium_logits, large_logits, features = self.multi_scale_discriminator(context_vector, return_features)
-            return (small_logits, medium_logits, large_logits), features        
+        x, _ = self.attention(img, text)
+        for layer in self.conv_blocks:
+            x = layer(x)
+        features = x
+        for layer in self.logit_block:
+            x = layer(x)
+        if not return_features :            
+            return x 
         else :
-            small_logits, medium_logits, large_logits = self.multi_scale_discriminator(context_vector)
-            return small_logits, medium_logits, large_logits
-
+            return x, features
 
 class StageI(tf.keras.Model):
     def __init__(self, output_dim, loss_fn, optimizer, char, erroneous_weight=5.3, gp_weight=10.0, fm_weight=4.7):
@@ -553,7 +456,7 @@ class StageI(tf.keras.Model):
 
 
 class StageII(tf.keras.Model):
-    def __init__(self, output_dim, loss_fn, optimizer, char, GI, legacy_ca, noise_size, erroneous_weight=4.2, gp_weight=10.0, fm_weight=3.75):
+    def __init__(self, output_dim, loss_fn, optimizer, char, GI, legacy_ca, noise_size, erroneous_weight=5.3, gp_weight=10.0, fm_weight=0.22):
         super(StageII, self).__init__()
         self.generator = StageII_Generator(output_dim)
         self.g1 = GI
@@ -577,24 +480,13 @@ class StageII(tf.keras.Model):
         alpha = tf.random.uniform(shape=[real_images.shape[0], 1, 1, 1], minval=0., maxval=1.)
         alpha = tf.broadcast_to(alpha, real_images.shape)
         interpolated_images = alpha * real_images + (1 - alpha) * fake_images
-
-        with tf.GradientTape(persistent=True) as tape:
+        
+        with tf.GradientTape() as tape:
             tape.watch(interpolated_images)
-            d_interpolated_small, d_interpolated_medium, d_interpolated_large = self.discriminator([interpolated_images, embeddings], training=True)
-
-        gradients_small = tape.gradient(d_interpolated_small, [interpolated_images])[0]
-        gradients_medium = tape.gradient(d_interpolated_medium, [interpolated_images])[0]
-        gradients_large = tape.gradient(d_interpolated_large, [interpolated_images])[0]
-
-        gradients_l2_small = tf.sqrt(tf.reduce_sum(tf.square(gradients_small), axis=[1, 2, 3]))
-        gradients_l2_medium = tf.sqrt(tf.reduce_sum(tf.square(gradients_medium), axis=[1, 2, 3]))
-        gradients_l2_large = tf.sqrt(tf.reduce_sum(tf.square(gradients_large), axis=[1, 2, 3]))
-
-        gradient_penalty_small = tf.reduce_mean((gradients_l2_small - 1.0) ** 2)
-        gradient_penalty_medium = tf.reduce_mean((gradients_l2_medium - 1.0) ** 2)
-        gradient_penalty_large = tf.reduce_mean((gradients_l2_large - 1.0) ** 2)
-
-        gradient_penalty = (gradient_penalty_small + gradient_penalty_medium + gradient_penalty_large) / 3.0
+            d_interpolated = self.discriminator([interpolated_images, embeddings], training=True)
+        gradients = tape.gradient(d_interpolated, [interpolated_images])[0]
+        gradients_l2 = tf.sqrt(tf.reduce_sum(tf.square(gradients), axis=[1, 2, 3]))
+        gradient_penalty = tf.reduce_mean((gradients_l2 - 1.0) ** 2)
         return gradient_penalty
 
     def grant_weight(self, index):
@@ -608,46 +500,35 @@ class StageII(tf.keras.Model):
         return interval_prob
 
     def discriminator_loss(self, real_output, fake_output, wrong_outputs, real_images, fake_images, embeddings):
-        real_loss = 0
-        fake_loss = 0
-        for real, fake in zip(real_output, fake_output):
-            real_loss += self.cross_entropy(tf.ones_like(real) * 0.9, real) / 3.0
-            fake_loss += self.cross_entropy(tf.ones_like(fake) * 0.1, fake) / 3.0
+        real_loss = self.cross_entropy(tf.ones_like(real_output) * 0.9, real_output)
+        fake_loss = self.cross_entropy(tf.ones_like(fake_output) * 0.1, fake_output)
 
         wrong_losses = []
-        for i, scale_wrong_outputs in enumerate(wrong_outputs):
-            scale_wrong_loss = 0
+        for i, wrong_output in enumerate(wrong_outputs):
             weight = self.grant_weight(i)
-            for wrong_output in scale_wrong_outputs:
-                wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output) / 3.0
-                scale_wrong_loss += weight * wrong_loss
-            wrong_losses.append(scale_wrong_loss)
+            wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
+            wrong_losses.append(weight * wrong_loss)
 
         total_wrong_loss = tf.reduce_sum(wrong_losses)
         gp = self.gradient_penalty(real_images, fake_images, embeddings)
         return real_loss + fake_loss + self.d_erroneous_weight * total_wrong_loss + self.gp_weight * gp
 
     def generator_loss(self, fake_output, wrong_outputs, mu, logvar, real_features, fake_features):
-        gen_loss = 0
-        for fake in fake_output:
-            gen_loss += self.cross_entropy(tf.ones_like(fake) * 0.9, fake) / 3.0
+        gen_loss = self.cross_entropy(tf.ones_like(fake_output) * 0.9, fake_output)
 
         wrong_losses = []
-        for i, scale_wrong_outputs in enumerate(wrong_outputs):
-            scale_wrong_loss = 0
+        for i, wrong_output in enumerate(wrong_outputs):
             weight = self.grant_weight(i)
-            for wrong_output in scale_wrong_outputs:
-                wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output) / 3.0
-                scale_wrong_loss += weight * wrong_loss
-            wrong_losses.append(scale_wrong_loss)
-        
+            wrong_loss = self.cross_entropy(tf.ones_like(wrong_output) * 0.1, wrong_output)
+            wrong_losses.append(weight * wrong_loss)
+
         total_wrong_loss = tf.reduce_sum(wrong_losses)
         fm_loss = tf.reduce_mean(tf.square(tf.reduce_mean(real_features, axis=[0, 1, 2]) - tf.reduce_mean(fake_features, axis=[0, 1, 2])))
         kl_div = -0.5 * tf.reduce_mean(1 + logvar - tf.square(mu) - tf.exp(logvar))
         return gen_loss + self.g_erroneous_weight * total_wrong_loss + kl_div + self.fm_weight * fm_loss
 
-    def call(self, text_embeddings, real_images, noise_size):
-        noise = tf.random.normal([real_images.shape[0], noise_size])
+    def call(self, text_embeddings, real_images):
+        noise = tf.random.normal([real_images.shape[0], self.noise_size])
         mu, logvar, _ = self.ca1(text_embeddings, training=True)
         mu0, logvar0, _ = self.ca0(text_embeddings, training=False)
         c0 = mu + tf.exp(logvar * 0.5) * tf.random.normal(shape=mu.shape)
@@ -661,28 +542,21 @@ class StageII(tf.keras.Model):
         d_wrong_outputs = []
         g_wrong_outputs = []
         for i in range(1, BATCH_SIZE_2 + 1):
-            wrong_output_1_small, wrong_output_1_medium, wrong_output_1_large = self.discriminator([real_images[i:], c0[:-i]], training=True)
-            wrong_output_2_small, wrong_output_2_medium, wrong_output_2_large = self.discriminator([real_images[:i], c0[-i:]], training=True)
+            wrong_output_1 = self.discriminator([real_images[i:], c0[:-i]], training=True)
+            wrong_output_2 = self.discriminator([real_images[:i], c0[-i:]], training=True)
+            wrong_output_concat_1_2 = tf.concat([wrong_output_1, wrong_output_2], axis=0)
+            d_wrong_outputs.append(wrong_output_concat_1_2)
 
-            wrong_output_concat_1_2_small = tf.concat([wrong_output_1_small, wrong_output_2_small], axis=0)
-            wrong_output_concat_1_2_medium = tf.concat([wrong_output_1_medium, wrong_output_2_medium], axis=0)
-            wrong_output_concat_1_2_large = tf.concat([wrong_output_1_large, wrong_output_2_large], axis=0)
-            d_wrong_outputs.append([wrong_output_concat_1_2_small, wrong_output_concat_1_2_medium, wrong_output_concat_1_2_large])
-
-
-            wrong_output_3_small, wrong_output_3_medium, wrong_output_3_large = self.discriminator([generated_images[i:], c0[:-i]], training=True)
-            wrong_output_4_small, wrong_output_4_medium, wrong_output_4_large = self.discriminator([generated_images[:i], c0[-i:]], training=True)
-
-            wrong_output_concat_3_4_small = tf.concat([wrong_output_3_small, wrong_output_4_small], axis=0)
-            wrong_output_concat_3_4_medium = tf.concat([wrong_output_3_medium, wrong_output_4_medium], axis=0)
-            wrong_output_concat_3_4_large = tf.concat([wrong_output_3_large, wrong_output_4_large], axis=0)
-            g_wrong_outputs.append([wrong_output_concat_3_4_small, wrong_output_concat_3_4_medium, wrong_output_concat_3_4_large])
+            wrong_output_3 = self.discriminator([generated_images[i:], c0[:-i]], training=True)
+            wrong_output_4 = self.discriminator([generated_images[:i], c0[-i:]], training=True)
+            wrong_output_concat_3_4 = tf.concat([wrong_output_3, wrong_output_4], axis=0)
+            g_wrong_outputs.append(wrong_output_concat_3_4)
 
         return real_output, fake_output, d_wrong_outputs, g_wrong_outputs, mu, logvar, generated_images, c0, real_features, fake_features
 
-    def train_step(self, text_embeddings, real_images, noise_size):
+    def train_step(self, text_embeddings, real_images):
         with tf.GradientTape(persistent=True) as tape:
-            real_output, fake_output, d_wrong_output, g_wrong_output, mu, logvar, generated_images, embeddings, real_features, fake_features = self(text_embeddings, real_images, noise_size)
+            real_output, fake_output, d_wrong_output, g_wrong_output, mu, logvar, generated_images, embeddings, real_features, fake_features = self(text_embeddings, real_images)
             d_loss = self.discriminator_loss(real_output, fake_output, d_wrong_output, real_images, generated_images, embeddings)
             g_loss = self.generator_loss(fake_output, g_wrong_output, mu, logvar, real_features, fake_features)
         gradients_of_generator = tape.gradient(g_loss, self.generator.trainable_variables + self.ca1.trainable_variables + self.g1.trainable_variables)
@@ -691,6 +565,7 @@ class StageII(tf.keras.Model):
         self.discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, self.discriminator.trainable_variables))
         
         return d_loss, g_loss
+
 
 
 
@@ -1028,7 +903,7 @@ def main_stage2(latent_dim, ca, g1, flag, path) :
     def train_step_stage2(batch) :
         _, final_target, text = batch
         print(text.shape, final_target.shape)
-        d_loss, g_loss = s2.train_step(text, final_target, noise_size)
+        d_loss, g_loss = s2.train_step(text, final_target)
         return g_loss, d_loss  
 
 
