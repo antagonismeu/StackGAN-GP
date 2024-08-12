@@ -108,26 +108,6 @@ class CA2(tf.keras.Model):
 
 
 
-class AttentionLayer(tf.keras.layers.Layer):
-    def __init__(self, units, factor):
-        super(AttentionLayer, self).__init__()
-        self.units = units
-        self.factor = factor
-        self.W = layers.Dense(units)
-        self.U = layers.Dense(units)
-        self.V = layers.Dense(1)
-
-    def call(self, features, hidden):
-        score = tf.nn.tanh(self.W(features) + self.U(hidden))
-        attention_weights = tf.nn.softmax(self.V(score), axis=(1, 2))
-
-        context_vector = attention_weights * features
-        context_vector = tf.reduce_sum(context_vector, axis=[1, 2])
-        context_vector = tf.expand_dims(context_vector, axis=1)
-        context_vector = tf.expand_dims(context_vector, axis=1)
-        context_vector = tf.tile(context_vector, [1, self.factor, self.factor, 1])
-        return context_vector, attention_weights
-
 
 
 class ResidualBlock(tf.keras.Model):
@@ -140,15 +120,14 @@ class ResidualBlock(tf.keras.Model):
         self.bn2 = layers.BatchNormalization()
         self.relu2 = layers.ReLU()
 
-    def call(self, x):
-        x = self.conv1(x)
+    def call(self, x0):
+        x = self.conv1(x0)
         x = self.bn1(x)
         x = self.relu(x)
-        residual = x
         x = self.conv2(x)
         x = self.bn2(x)
         x = self.relu2(x)
-        return x + residual
+        return x + x0
 
 
 class StageI_Generator(tf.keras.Model):
@@ -278,75 +257,201 @@ class StageI_Discriminator(tf.keras.Model):
 class StageII_Generator(tf.keras.Model):
     def __init__(self, dimension):
         super(StageII_Generator, self).__init__()
-        self.dense = layers.Dense(dimension)
-        self.reshape = layers.Reshape((1, 1, dimension))
-        self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 4, HEIGHT // 4, 1]))
-        self.attention = AttentionLayer(dimension, WIDTH // 4)
-        self.residual_block1 = ResidualBlock(filters=64)
-        self.residual_block2 = ResidualBlock(filters=128)
-        self.upsample1 = layers.UpSampling2D(size=(2, 2))
-        self.residual_block3 = ResidualBlock(filters=256)
-        self.upsample2 = layers.UpSampling2D(size=(2, 2))
-        self.residual_block4 = ResidualBlock(filters=512)
-        self.final_conv = layers.Conv2D(3, kernel_size=3, strides=1, padding='same', use_bias=False)
-        self.tanh = layers.Activation('tanh')
+        self.reshape = layers.Reshape((1, 1, dimension))                                   # embedding_dim_2 = 770
+        self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 16, HEIGHT // 16, 1]))
+        self.conv1 = layers.Conv2D(128, kernel_size=(3, 3), strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.ac1 = layers.ReLU()
+        self.concat = layers.Concatenate(axis=-1)
+        self.conv2 = layers.Conv2D(256, kernel_size=(4, 4), strides=2, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn1 = layers.BatchNormalization()
+        self.ac2 = layers.ReLU()
+        self.conv3 = layers.Conv2D(512, kernel_size=(4, 4), strides=2, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn2 = layers.BatchNormalization()
+        self.ac3 = layers.ReLU()
 
+        self.conv4 = layers.Conv2D(512, kernel_size=(3, 3), strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn3 = layers.BatchNormalization()
+        self.ac4 = layers.ReLU()
+
+        self.conv5 = layers.Conv2D(1024, kernel_size=(3, 3), strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn4 = layers.BatchNormalization()
+        self.ac5 = layers.ReLU()
+
+        self.rb1 = ResidualBlock(1024)
+        self.rb2 = ResidualBlock(1024)
+        self.rb3 = ResidualBlock(1024)
+        self.rb4 = ResidualBlock(1024)
+        
+        self.upsampling1 = layers.UpSampling2D(size=(2, 2))
+        self.conv6 = layers.Conv2D(512, kernel_size=3, strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn5 = layers.BatchNormalization()
+        self.ac6 = layers.ReLU()
+
+        self.upsampling2 = layers.UpSampling2D(size=(2, 2))
+        self.conv7 = layers.Conv2D(256, kernel_size=3, strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn6 = layers.BatchNormalization()
+        self.ac7 = layers.ReLU()
+
+        self.upsampling3 = layers.UpSampling2D(size=(2, 2))
+        self.conv8 = layers.Conv2D(128, kernel_size=3, strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn7 = layers.BatchNormalization()
+        self.ac8 = layers.ReLU()
+
+        self.upsampling4 = layers.UpSampling2D(size=(2, 2))
+        self.conv9 = layers.Conv2D(64, kernel_size=3, strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn8 = layers.BatchNormalization()
+        self.ac9 = layers.ReLU()
+
+        self.conv10 = layers.Conv2D(3, kernel_size=3, strides=1, padding='same', use_bias=False)
+        self.tanh = layers.Activation('tanh')
+        
     def call(self, inputs):
         c, img = inputs
-        c = self.dense(c)
+        img = self.conv1(img)
+        img = self.ac1(img)
+        img = self.conv2(img)
+        img = self.bn1(img)
+        img = self.ac2(img)
+        img = self.conv3(img)
+        img = self.bn2(img)
+        img = self.ac3(img)
         c = self.reshape(c)
         c = self.tile(c)
-        x, _ = self.attention(img, c)
-        x = self.residual_block1(x)
-        x = self.residual_block2(x)
-        x = self.upsample1(x)
-        x = self.residual_block3(x)
-        x = self.upsample2(x)
-        x = self.residual_block4(x)
-        x = self.final_conv(x)
+        x = self.concat([c, img])
+        x = self.conv4(x)
+        x = self.bn3(x)
+        x = self.ac4(x)
+        x = self.conv5(x)
+        x = self.bn4(x)
+        x = self.ac5(x)
+        x = self.rb1(x)
+        x = self.rb2(x)
+        x = self.rb3(x)
+        x = self.rb4(x)
+        x = self.upsampling1(x)
+        x = self.conv6(x)
+        x = self.bn5(x)
+        x = self.ac6(x)
+        x = self.upsampling2(x)
+        x = self.conv7(x)
+        x = self.bn6(x)
+        x = self.ac7(x)
+        x = self.upsampling3(x)
+        x = self.conv8(x)
+        x = self.bn7(x)
+        x = self.ac8(x)
+        x = self.upsampling4(x)
+        x = self.conv9(x)
+        x = self.bn8(x)
+        x = self.ac9(x) 
+        x = self.conv10(x)                       
         return self.tanh(x)
+
 
 
 class StageII_Discriminator(tf.keras.Model):
     def __init__(self, dimension):
         super(StageII_Discriminator, self).__init__()
-        self.dense = layers.Dense(dimension)
-        self.reshape_text = layers.Reshape((1, 1, dimension))
-        self.tile_text = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH, HEIGHT, 1]))
-        self.attention = AttentionLayer(dimension, WIDTH)
-        self.conv_blocks = [
-            layers.Conv2D(512, kernel_size=4, strides=2, padding='same', use_bias=False),
-            layers.LeakyReLU(alpha=0.2),
-            layers.Conv2D(256, kernel_size=4, strides=2, padding='same', use_bias=False),
-            layers.BatchNormalization(),
-            layers.LeakyReLU(alpha=0.2),
-            layers.Conv2D(128, kernel_size=4, strides=2, padding='same', use_bias=False),
-            layers.BatchNormalization(),
-            layers.LeakyReLU(alpha=0.2),
-            layers.Conv2D(64, kernel_size=4, strides=2, padding='same', use_bias=False),
-            layers.BatchNormalization(),
-            layers.LeakyReLU(alpha=0.2)
-        ]
-        self.logit_block = [
-            layers.Flatten(),
-            layers.Dense(1, activation='sigmoid')
-        ]
+        self.reshape = layers.Reshape((1, 1, dimension))                                   # embedding_dim_2 = 770
+        self.tile = layers.Lambda(lambda x: tf.tile(x, [1, WIDTH // 64, HEIGHT // 64, 1]))
+
+        self.conv1 = layers.Conv2D(64, kernel_size=(4, 4), strides=2, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.ac1 = layers.LeakyReLU(alpha=0.2)
+        
+        self.conv2 = layers.Conv2D(128, kernel_size=(4, 4), strides=2, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn1 = layers.BatchNormalization()
+        self.ac2 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv3 = layers.Conv2D(256, kernel_size=(4, 4), strides=2, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn2 = layers.BatchNormalization()
+        self.ac3 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv4 = layers.Conv2D(512, kernel_size=(4, 4), strides=2, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn3 = layers.BatchNormalization()
+        self.ac4 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv5 = layers.Conv2D(1024, kernel_size=(4, 4), strides=2, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn4 = layers.BatchNormalization()
+        self.ac5 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv6 = layers.Conv2D(2048, kernel_size=(4, 4), strides=2, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn5 = layers.BatchNormalization()
+        self.ac6 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv7 = layers.Conv2D(1024, kernel_size=(1, 1), strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn6 = layers.BatchNormalization()
+        self.ac7 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv8 = layers.Conv2D(512, kernel_size=(1, 1), strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn7 = layers.BatchNormalization()
+
+        self.conv9 = layers.Conv2D(128, kernel_size=(1, 1), strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn8 = layers.BatchNormalization()
+        self.ac8 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv10 = layers.Conv2D(128, kernel_size=(3, 3), strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn9 = layers.BatchNormalization()
+        self.ac9 = layers.LeakyReLU(alpha=0.2)
+
+        self.conv11 = layers.Conv2D(512, kernel_size=(3, 3), strides=1, padding='same', use_bias=False, kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn10 = layers.BatchNormalization()
+        self.ac10 = layers.LeakyReLU(alpha=0.2)
+
+        self.add = layers.Add()
+        self.conv12 = layers.Conv2D(64 * 8, kernel_size=1, strides=1, padding='same', kernel_regularizer=tf.keras.regularizers.l2(0.01))
+        self.bn11 = layers.BatchNormalization()
+        self.ac11 = layers.LeakyReLU(alpha=0.2)
+        self.flatten = layers.Flatten()
+        self.concat = layers.Concatenate(axis=-1)
+        self.fc = layers.Dense(1, activation='sigmoid')
 
     def call(self, inputs, return_features=False):
-        img, text = inputs
-        text = self.dense(text)
-        text = self.reshape_text(text)
-        text = self.tile_text(text)
-        x, _ = self.attention(img, text)
-        for layer in self.conv_blocks:
-            x = layer(x)
+        img, aux_input = inputs
+        img = self.conv1(img)
+        img = self.ac1(img)
+        img = self.conv2(img)
+        img = self.bn1(img)
+        img = self.ac2(img)
+        img = self.conv3(img)
+        img = self.bn2(img)
+        img = self.ac3(img)
+        img = self.conv4(img)
+        img = self.bn3(img)
+        img = self.ac4(img)
+        img = self.conv5(img)
+        img = self.bn4(img)
+        img = self.ac5(img)
+        img = self.conv6(img)
+        img = self.bn5(img)
+        img = self.ac6(img)
+        img = self.conv7(img)
+        img = self.bn6(img)
+        img = self.ac7(img)  
+        img = self.conv8(img)
+        img = self.bn7(img)
+        img_ = self.conv9(img)
+        img_ = self.bn8(img_)
+        img_ = self.ac8(img_)
+        img_ = self.conv10(img_)
+        img_ = self.bn9(img_)
+        img_ = self.ac9(img_)
+        img_ = self.conv11(img_)
+        img_ = self.bn10(img_)
+        x = self.add([img, img_])  
+        x = self.ac10(x)
         features = x
-        for layer in self.logit_block:
-            x = layer(x)
-        if not return_features :            
-            return x 
+        aux = self.reshape(aux_input)
+        aux = self.tile(aux)
+        z = self.concat([x, aux]) 
+        z = self.conv12(z)
+        z = self.bn11(z)
+        z = self.ac11(z)  
+        z = self.flatten(z)
+        z = self.fc(z)  
+        if not return_features :                                                 
+            return z               
         else :
-            return x, features
+            return z, features
 
 class StageI(tf.keras.Model):
     def __init__(self, output_dim, loss_fn, optimizer, char, erroneous_weight=5.3, gp_weight=10.0, fm_weight=4.7):
@@ -868,7 +973,7 @@ def main_stage2(latent_dim, ca, g1, flag, path) :
     )  
     lr_schedule_2 = tf.keras.optimizers.schedules.ExponentialDecay(
         learning_rate,
-        decay_steps=100,
+        decay_steps=120,
         decay_rate=0.962,
         staircase=True
     )  
