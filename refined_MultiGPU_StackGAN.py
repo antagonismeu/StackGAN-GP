@@ -850,10 +850,18 @@ def main_stage1(latent_dim, flag, path) :
         cross_entropy = tf.keras.losses.BinaryCrossentropy(from_logits=True, reduction=tf.keras.losses.Reduction.NONE)
         optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=lr_schedule_2, beta_1=0.5)
         s1 = StageI(latent_dim, cross_entropy, optimizer, char)
-        if flag :
-            s1.generator.load_weight(f'modles/{path[1]}')
-            s1.discriminator.load_weight(f'modles/{path[2]}')
-            s1.ca.load_weight(f'modles/{path[0]}')
+        if flag:
+            ca_suffix = path[0][-3:]
+            g_suffix = path[1][-3:]
+            d_suffix = path[2][-3:]
+            if not (ca_suffix == g_suffix == d_suffix):
+                raise ValueError("Aberration : You must load the models from the same epoch")
+            s1.generator.load_weights(f'models/{path[1]}')
+            s1.discriminator.load_weights(f'models/{path[2]}')
+            s1.ca1.load_weights(f'models/{path[0]}')
+            continuants = int(ca_suffix)
+        else:
+            continuants = 0
         s1.compile(optimizer=optimizer, loss=cross_entropy)
 
 
@@ -879,7 +887,7 @@ def main_stage1(latent_dim, flag, path) :
 
 
 
-    for epoch in range(epochs_stage) :
+    for epoch in range(continuants, epochs_stage) :
         sparse_tensorized_data = strategy.experimental_distribute_dataset(dataset)
         iterator = iter(sparse_tensorized_data)
 
@@ -985,12 +993,20 @@ def main_stage2(latent_dim, ca, g1, flag, path) :
         g2_optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=g2_lr_schedule_2, beta_1=0.5)
         d2_optimizer = tf.keras.optimizers.legacy.Adam(learning_rate=d2_lr_schedule_2, beta_1=0.5)
         s2 = StageII(latent_dim, cross_entropy, g2_optimizer, d2_optimizer, char, g1, ca ,noise_size)
-        if flag :
+        if flag:
+            ca_suffix = path[0][-3:]
+            g_suffix = path[1][-3:]
+            d_suffix = path[2][-3:]
+            if not (ca_suffix == g_suffix == d_suffix):
+                raise ValueError("Aberration : You must load the models from the same epoch")
             s2.generator.load_weights(f'models/{path[1]}')
             s2.discriminator.load_weights(f'models/{path[2]}')
             s2.ca1.load_weights(f'models/{path[0]}')
-        s2.compile(optimizer=g2_optimizer, loss=cross_entropy)
+            continuants = int(ca_suffix)
+        else:
+            continuants = 0
 
+        s2.compile(optimizer=g2_optimizer, loss=cross_entropy)
 
 
     print(f'Number of available GPUs: {strategy.num_replicas_in_sync}')
@@ -1014,7 +1030,7 @@ def main_stage2(latent_dim, ca, g1, flag, path) :
 
 
 
-    for epoch in range(epochs_stage) :
+    for epoch in range(continuants, epochs_stage) :
         sparse_tensorized_data = strategy.experimental_distribute_dataset(dataset)
         iterator = iter(sparse_tensorized_data)
 
